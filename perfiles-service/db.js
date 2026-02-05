@@ -15,8 +15,8 @@ export const pool = new Pool({
 
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {
-    console.error("❌ Error conectando a perfiles_db:", err);
+    console.error(" Error conectando a perfiles_db:", err);
   } else {
-    console.log("✅ perfiles_db conectado:", res.rows[0]);
+    console.log(" perfiles_db conectado:", res.rows[0]);
   }
 });

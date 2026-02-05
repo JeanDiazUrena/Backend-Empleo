@@ -15,8 +15,8 @@ export const pool = new Pool({
 
 pool.query("SELECT NOW()", (err, res) => {
   if (err) {
-    console.error("❌ Error conectando a PostgreSQL:", err);
+    console.error("Error conectando a PostgreSQL:", err);
   } else {
-    console.log("✅ PostgreSQL conectado correctamente:", res.rows[0]);
+    console.log(" PostgreSQL conectado correctamente:", res.rows[0]);
   }
 });
