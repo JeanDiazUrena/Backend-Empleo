@@ -440,13 +440,80 @@ app.delete("/api/portfolio/:id", async (req, res) => {
 
 });
 
+app.post("/api/clientes", upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'banner', maxCount: 1 }]), async (req, res) => {
+  try {
+    const { usuario_id, phone, location, nombre, email } = req.body;
 
+    // 1. Procesar Imágenes (Si se subieron)
+    let avatarUrl = null;
+    let bannerUrl = null;
 
-app.listen(PORT, () => {
+    if (req.files['avatar']) {
+      avatarUrl = `http://localhost:${PORT}/uploads/${req.files['avatar'][0].filename}`;
+    }
+    if (req.files['banner']) {
+      bannerUrl = `http://localhost:${PORT}/uploads/${req.files['banner'][0].filename}`;
+    }
 
-  console.log(`SERVIDOR 3001 CORRIENDO`);
+    // 2. Verificar existencia
+    const check = await pool.query("SELECT id FROM clientes WHERE usuario_id = $1", [usuario_id]);
 
+    if (check.rows.length > 0) {
+      // ACTUALIZAR (UPDATE)
+      // Usamos COALESCE para: Si enviamos una foto nueva ($3), úsala. Si es null, mantén la vieja (avatar).
+      await pool.query(
+        `UPDATE clientes SET 
+           telefono = $1, 
+           direccion = $2, 
+           avatar = COALESCE($3, avatar), 
+           banner = COALESCE($4, banner),
+           nombre = COALESCE($5, nombre),
+           email = COALESCE($6, email)
+         WHERE usuario_id = $7`,
+        [phone, location, avatarUrl, bannerUrl, nombre, email, usuario_id]
+      );
+    } else {
+      // CREAR (INSERT)
+      await pool.query(
+        `INSERT INTO clientes (usuario_id, telefono, direccion, avatar, banner, nombre, email) 
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [usuario_id, phone, location, avatarUrl, bannerUrl, nombre, email]
+      );
+    }
+
+    res.json({ message: "Perfil guardado con imágenes" });
+
+  } catch (error) {
+    console.error("Error backend clientes:", error);
+    res.status(500).json({ error: "Error guardando datos" });
+  }
 });
 
 
+// ==========================================
+// RUTA FALTANTE: OBTENER PERFIL CLIENTE
+// ==========================================
+app.get("/api/clientes/:usuarioId", async (req, res) => {
+  const { usuarioId } = req.params;
+  
+  try {
+    // Buscamos al cliente por su ID de usuario
+    const result = await pool.query("SELECT * FROM clientes WHERE usuario_id = $1", [usuarioId]);
+    
+    if (result.rows.length === 0) {
+      return res.json(null); // No existe perfil, el frontend pedirá crearlo
+    }
+    
+    // Devolvemos el perfil encontrado (teléfono, dirección, avatar...)
+    res.json(result.rows[0]);
+    
+  } catch (error) {
+    console.error("Error al obtener cliente:", error);
+    res.status(500).json({ error: "Error del servidor" });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`SERVIDOR 3001 CORRIENDO`);
+});
 
