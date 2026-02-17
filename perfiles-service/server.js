@@ -482,13 +482,11 @@ app.post("/api/clientes", upload.fields([{ name: 'avatar', maxCount: 1 }, { name
     }
 
     res.json({ message: "Perfil guardado con imágenes" });
-
   } catch (error) {
     console.error("Error backend clientes:", error);
     res.status(500).json({ error: "Error guardando datos" });
   }
 });
-
 
 // ==========================================
 // RUTA FALTANTE: OBTENER PERFIL CLIENTE
