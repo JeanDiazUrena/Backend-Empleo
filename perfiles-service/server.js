@@ -6,10 +6,16 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from 'url';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
 
 dotenv.config();
 
 const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: "http://localhost:5173", methods: ["GET", "POST"] }
+});
 const PORT = 3001;
 
 const __filename = fileURLToPath(import.meta.url);
@@ -82,6 +88,49 @@ app.post("/api/perfiles", upload.fields([{ name: 'avatar', maxCount: 1 }, { name
   } catch (error) {
     console.error("Error backend:", error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ==========================================
+// RUTA 2B: OBTENER TODOS LOS PROFESIONALES (Para Explorar)
+// ==========================================
+app.get("/api/profesionales", async (req, res) => {
+  const { busqueda, categoria, ciudad } = req.query;
+  try {
+    let query = `
+      SELECT 
+        p.*,
+        (SELECT nombre FROM categorias c JOIN profesional_categorias pc ON pc.categoria_id = c.id WHERE pc.profesional_id = p.id LIMIT 1) as categoria_nombre,
+        (SELECT STRING_AGG(h.nombre, ', ') FROM habilidades h JOIN profesional_habilidades ph ON ph.habilidad_id = h.id WHERE ph.profesional_id = p.id) as habilidades,
+        (SELECT imagen_url FROM trabajos_portafolio tp WHERE tp.profesional_id = p.id ORDER BY id DESC LIMIT 1) as foto_reciente
+      FROM profesionales p
+      WHERE 1=1
+    `;
+    const params = [];
+    let i = 1;
+
+    if (busqueda) {
+      query += ` AND (LOWER(p.nombre) LIKE $${i} OR LOWER(p.profesion) LIKE $${i} OR LOWER(p.biografia) LIKE $${i})`;
+      params.push(`%${busqueda.toLowerCase()}%`);
+      i++;
+    }
+    if (categoria) {
+      query += ` AND EXISTS (SELECT 1 FROM categorias c JOIN profesional_categorias pc ON pc.categoria_id = c.id WHERE pc.profesional_id = p.id AND LOWER(c.nombre) = $${i})`;
+      params.push(categoria.toLowerCase());
+      i++;
+    }
+    if (ciudad) {
+      query += ` AND LOWER(p.ciudad) LIKE $${i}`;
+      params.push(`%${ciudad.toLowerCase()}%`);
+      i++;
+    }
+
+    query += ` ORDER BY p.id DESC`;
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (error) {
+    console.error("Error obteniendo profesionales:", error);
+    res.status(500).json({ error: "Error servidor" });
   }
 });
 
@@ -197,6 +246,157 @@ app.post("/api/clientes", upload.fields([{ name: 'avatar', maxCount: 1 }, { name
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`SERVIDOR 3001 CORRIENDO`);
+// ==========================================
+// CREAR TABLAS DE CHAT (si no existen)
+// ==========================================
+const initChatTables = async () => {
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS conversaciones (
+        id SERIAL PRIMARY KEY,
+        cliente_id UUID NOT NULL,
+        profesional_usuario_id UUID NOT NULL,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(cliente_id, profesional_usuario_id)
+      )
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS mensajes (
+        id SERIAL PRIMARY KEY,
+        conversacion_id INTEGER REFERENCES conversaciones(id) ON DELETE CASCADE,
+        remitente_id UUID NOT NULL,
+        contenido TEXT NOT NULL,
+        leido BOOLEAN DEFAULT false,
+        created_at TIMESTAMP DEFAULT NOW()
+      )
+    `);
+    console.log("Tablas de chat listas");
+  } catch (err) {
+    console.error("Error creando tablas chat:", err.message);
+  }
+};
+initChatTables();
+
+// ==========================================
+// RUTAS DE CHAT (REST)
+// ==========================================
+app.post("/api/chat/conversacion", async (req, res) => {
+  const { cliente_id, profesional_usuario_id } = req.body;
+  if (!cliente_id || !profesional_usuario_id) return res.status(400).json({ error: "Faltan datos" });
+  try {
+    await pool.query(
+      `INSERT INTO conversaciones (cliente_id, profesional_usuario_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [cliente_id, profesional_usuario_id]
+    );
+    const result = await pool.query(
+      `SELECT * FROM conversaciones WHERE cliente_id = $1 AND profesional_usuario_id = $2`,
+      [cliente_id, profesional_usuario_id]
+    );
+    res.json(result.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/api/chat/conversaciones/cliente/:usuarioId", async (req, res) => {
+  const { usuarioId } = req.params;
+  try {
+    const result = await pool.query(`
+      SELECT c.*,
+        p.nombre as otro_nombre, p.avatar_url as otro_avatar, p.profesion as otro_sub,
+        (SELECT m.contenido FROM mensajes m WHERE m.conversacion_id = c.id ORDER BY m.created_at DESC LIMIT 1) as ultimo_mensaje,
+        (SELECT m.created_at FROM mensajes m WHERE m.conversacion_id = c.id ORDER BY m.created_at DESC LIMIT 1) as ultimo_mensaje_fecha,
+        (SELECT COUNT(*) FROM mensajes m WHERE m.conversacion_id = c.id AND m.remitente_id::text != $1 AND m.leido = false)::int as no_leidos
+      FROM conversaciones c
+      LEFT JOIN profesionales p ON p.usuario_id::text = c.profesional_usuario_id::text
+      WHERE c.cliente_id::text = $1
+      ORDER BY ultimo_mensaje_fecha DESC NULLS LAST
+    `, [usuarioId]);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/api/chat/conversaciones/profesional/:usuarioId", async (req, res) => {
+  const { usuarioId } = req.params;
+  try {
+    const result = await pool.query(`
+      SELECT c.*,
+        cl.nombre as otro_nombre, cl.avatar as otro_avatar, NULL as otro_sub,
+        (SELECT m.contenido FROM mensajes m WHERE m.conversacion_id = c.id ORDER BY m.created_at DESC LIMIT 1) as ultimo_mensaje,
+        (SELECT m.created_at FROM mensajes m WHERE m.conversacion_id = c.id ORDER BY m.created_at DESC LIMIT 1) as ultimo_mensaje_fecha,
+        (SELECT COUNT(*) FROM mensajes m WHERE m.conversacion_id = c.id AND m.remitente_id::text != $1 AND m.leido = false)::int as no_leidos
+      FROM conversaciones c
+      LEFT JOIN clientes cl ON cl.usuario_id::text = c.cliente_id::text
+      WHERE c.profesional_usuario_id::text = $1
+      ORDER BY ultimo_mensaje_fecha DESC NULLS LAST
+    `, [usuarioId]);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.get("/api/chat/mensajes/:conversacionId", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT * FROM mensajes WHERE conversacion_id = $1 ORDER BY created_at ASC`,
+      [req.params.conversacionId]
+    );
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+app.put("/api/chat/leer/:conversacionId", async (req, res) => {
+  const { lector_id } = req.body;
+  try {
+    await pool.query(
+      `UPDATE mensajes SET leido = true WHERE conversacion_id = $1 AND remitente_id::text != $2`,
+      [req.params.conversacionId, lector_id]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==========================================
+// SOCKET.IO — TIEMPO REAL
+// ==========================================
+const connectedUsers = new Set(); // Guardará los IDs de usuarios online
+
+io.on("connection", (socket) => {
+  // Cuando un usuario se conecta, envía su ID por la query
+  const userId = socket.handshake.query.userId;
+  if (userId) {
+    connectedUsers.add(userId);
+    // Emitir la lista actualizada a todo el mundo
+    io.emit("online_users", Array.from(connectedUsers));
+  }
+
+  socket.on("join_conversation", (conversacionId) => {
+    socket.join(`conv_${conversacionId}`);
+  });
+  
+  socket.on("send_message", async (data) => {
+    const { conversacion_id, remitente_id, contenido } = data;
+    try {
+      const result = await pool.query(
+        `INSERT INTO mensajes (conversacion_id, remitente_id, contenido) VALUES ($1, $2, $3) RETURNING *`,
+        [conversacion_id, remitente_id, contenido]
+      );
+      // Incluir el avatar del remitente o nombre extra opcional
+      io.to(`conv_${conversacion_id}`).emit("new_message", result.rows[0]);
+    } catch (err) {
+      console.error("Error en socket send_message:", err.message);
+    }
+  });
+
+  socket.on("disconnect", () => {
+    if (userId) {
+      connectedUsers.delete(userId);
+      // Notificar desconexión
+      io.emit("online_users", Array.from(connectedUsers));
+    }
+  });
+});
+
+// ==========================================
+// INICIAR SERVIDOR
+// ==========================================
+httpServer.listen(PORT, () => {
+  console.log(`SERVIDOR ${PORT} con Socket.io activo`);
 });
