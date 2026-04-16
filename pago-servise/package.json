@@ -1,0 +1,19 @@
+{
+  "name": "pa-service",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "serve.js",
+  "scripts": {
+    "dev": "nodemon serve.js",
+    "start": "node serve.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}

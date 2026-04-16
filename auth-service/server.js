@@ -46,9 +46,9 @@ app.post("/api/register", async (req, res) => {
       [nombre, email, hashedPassword, rol]
     );
 
-    res.status(201).json({ 
-        message: "Usuario creado correctamente",
-        id: newUser.rows[0].id // <--- DEVOLVEMOS EL ID
+    res.status(201).json({
+      message: "Usuario creado correctamente",
+      id: newUser.rows[0].id // <--- DEVOLVEMOS EL ID
     });
 
   } catch (error) {
@@ -126,13 +126,13 @@ app.post("/api/google", async (req, res) => {
       if (!rol) {
         return res.status(404).json({ message: "Cuenta no registrada. Por favor, crea una cuenta primero en la pantalla de registro." });
       }
-      
+
       if (!['cliente', 'profesional'].includes(rol)) {
         return res.status(400).json({ message: "Rol inválido al registrar por Google." });
       }
 
       const randomPassword = await bcrypt.hash(Math.random().toString(36).substring(2, 18), 10);
-      
+
       const newUser = await pool.query(
         `INSERT INTO usuarios (nombre, email, password, rol, activo) VALUES ($1, $2, $3, $4, true) RETURNING *`,
         [name, email, randomPassword, rol]
