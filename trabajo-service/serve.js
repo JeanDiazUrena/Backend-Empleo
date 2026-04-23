@@ -30,6 +30,31 @@ app.post('/api/trabajos', async (req, res) => {
              VALUES ($1, $2, $3, 'EN_PROGRESO') RETURNING *`,
             [cliente_id, profesional_id, solicitud_id || null]
         );
+
+        // Update the solicitud in perfiles-service so it disappears from the professional's feed
+        if (solicitud_id) {
+            try {
+                await fetch(`http://localhost:3001/api/solicitudes/${solicitud_id}/progreso`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profesional_id })
+                });
+            } catch (err) {
+                console.error("Error setting solicitud to progreso:", err.message);
+            }
+        } else {
+            // Si no hay solicitud_id, cerramos cualquier solicitud pendiente del cliente
+            try {
+                await fetch(`http://localhost:3001/api/solicitudes/cliente/${cliente_id}/aceptar`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profesional_id })
+                });
+            } catch (err) {
+                console.error("Error setting pending solicitudes to progreso:", err.message);
+            }
+        }
+
         res.json({ success: true, trabajo: result.rows[0] });
     } catch (error) {
         console.error('Error al crear el trabajo:', error.message);
@@ -104,7 +129,8 @@ app.post('/api/trabajos/:id/confirmar', async (req, res) => {
         res.status(200).json({
             success: true,
             mensaje: '¡Trabajo confirmado con éxito! El pago será liberado al profesional.',
-            trabajo_id: trabajoId
+            trabajo_id: trabajoId,
+            profesional_id: trabajo.profesional_id
         });
 
     } catch (error) {
@@ -221,7 +247,7 @@ app.post('/api/trabajos/:id/resena', async (req, res) => {
 app.get('/api/trabajos/cliente/:id', async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT * FROM trabajos WHERE cliente_id = $1 ORDER BY fecha_creacion DESC',
+            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado != 'CONFIRMADO_CLIENTE' ORDER BY fecha_creacion DESC",
             [req.params.id]
         );
         res.json(result.rows);
@@ -243,6 +269,38 @@ app.get('/api/trabajos/profesional/:id', async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error('Error buscando trabajos del profesional:', error.message);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
+// =========================================================================
+// RUTA: OBTENER RESEÑAS DE PROFESIONAL
+// =========================================================================
+app.get('/api/resenas/profesional/:id', async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM resenas WHERE profesional_id = $1 ORDER BY fecha_creacion DESC',
+            [req.params.id]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error buscando reseñas del profesional:', error.message);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
+// =========================================================================
+// RUTA: OBTENER RESEÑAS DADAS POR UN CLIENTE
+// =========================================================================
+app.get('/api/resenas/cliente/:id', async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT * FROM resenas WHERE cliente_id = $1 ORDER BY fecha_creacion DESC',
+            [req.params.id]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error buscando reseñas del cliente:', error.message);
         res.status(500).json({ error: 'Error del servidor' });
     }
 });

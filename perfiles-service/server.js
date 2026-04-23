@@ -1,6 +1,5 @@
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import { pool } from "./db.js";
 import multer from "multer";
 import path from "path";
@@ -8,8 +7,11 @@ import fs from "fs";
 import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
+import dotenv from "dotenv";
 
 dotenv.config();
+
+
 
 const app = express();
 const httpServer = createServer(app);
@@ -77,12 +79,12 @@ app.post("/api/perfiles", upload.fields([{ name: 'avatar', maxCount: 1 }, { name
       await pool.query("INSERT INTO profesional_categorias (profesional_id, categoria_id) VALUES ($1, $2)", [profesionalId, catId]);
     }
     if (habilidades) {
-        await pool.query("DELETE FROM profesional_habilidades WHERE profesional_id = $1", [profesionalId]);
-        let habilidadesArray = typeof habilidades === 'string' ? habilidades.split(',').map(h => h.trim()).filter(Boolean) : [];
-        for (const habilidad of habilidadesArray) {
-            const habRes = await pool.query(`INSERT INTO habilidades (nombre) VALUES ($1) ON CONFLICT (nombre) DO UPDATE SET nombre = EXCLUDED.nombre RETURNING id`, [habilidad]);
-            await pool.query(`INSERT INTO profesional_habilidades (profesional_id, habilidad_id) VALUES ($1,$2)`, [profesionalId, habRes.rows[0].id]);
-        }
+      await pool.query("DELETE FROM profesional_habilidades WHERE profesional_id = $1", [profesionalId]);
+      let habilidadesArray = typeof habilidades === 'string' ? habilidades.split(',').map(h => h.trim()).filter(Boolean) : [];
+      for (const habilidad of habilidadesArray) {
+        const habRes = await pool.query(`INSERT INTO habilidades (nombre) VALUES ($1) ON CONFLICT (nombre) DO UPDATE SET nombre = EXCLUDED.nombre RETURNING id`, [habilidad]);
+        await pool.query(`INSERT INTO profesional_habilidades (profesional_id, habilidad_id) VALUES ($1,$2)`, [profesionalId, habRes.rows[0].id]);
+      }
     }
     res.json({ message: "Perfil guardado", id: profesionalId });
   } catch (error) {
@@ -235,7 +237,7 @@ app.post("/api/clientes", upload.fields([{ name: 'avatar', maxCount: 1 }, { name
     // DEVOLVER LOS DATOS REALES AL FRONTEND PARA ACTUALIZAR LA IMAGEN
     const updatedUser = await pool.query("SELECT * FROM clientes WHERE usuario_id = $1", [usuario_id]);
 
-    res.json({ 
+    res.json({
       message: "Perfil guardado con imágenes",
       cliente: updatedUser.rows[0]
     });
@@ -243,6 +245,29 @@ app.post("/api/clientes", upload.fields([{ name: 'avatar', maxCount: 1 }, { name
   } catch (error) {
     console.error("Error backend clientes:", error);
     res.status(500).json({ error: "Error guardando datos" });
+  }
+});
+
+app.delete("/api/perfiles/usuario/:usuarioId", async (req, res) => {
+  const { usuarioId } = req.params;
+  try {
+    const profResult = await pool.query("SELECT id FROM profesionales WHERE usuario_id = $1", [usuarioId]);
+    if (profResult.rows.length > 0) {
+      const profId = profResult.rows[0].id;
+      await pool.query("DELETE FROM profesional_categorias WHERE profesional_id = $1", [profId]).catch(() => { });
+      await pool.query("DELETE FROM profesional_habilidades WHERE profesional_id = $1", [profId]).catch(() => { });
+      await pool.query("DELETE FROM trabajos_portafolio WHERE profesional_id = $1", [profId]).catch(() => { });
+      await pool.query("DELETE FROM profesionales WHERE id = $1", [profId]).catch(() => { });
+    }
+
+    await pool.query("DELETE FROM clientes WHERE usuario_id = $1", [usuarioId]).catch(() => { });
+    await pool.query("DELETE FROM conversaciones WHERE cliente_id = $1 OR profesional_usuario_id = $1", [usuarioId]).catch(() => { });
+    await pool.query("DELETE FROM solicitudes WHERE cliente_id = $1", [usuarioId]).catch(() => { });
+
+    res.json({ success: true, message: "Datos del perfil eliminados de perfiles-service" });
+  } catch (error) {
+    console.error("Error eliminando perfil del usuario:", error);
+    res.status(500).json({ error: "Error eliminando perfil del usuario" });
   }
 });
 
@@ -270,7 +295,7 @@ const initChatTables = async () => {
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
-    
+
     // TABLA SOLICITUDES
     await pool.query(`
       CREATE TABLE IF NOT EXISTS solicitudes (
@@ -296,14 +321,14 @@ initChatTables();
 // ==========================================
 app.post("/api/solicitudes", upload.single('imagen'), async (req, res) => {
   try {
-    const { cliente_id, titulo, categoria, descripcion } = req.body;
+    const { cliente_id, titulo, categoria, descripcion, profesional_id } = req.body;
     let imagenUrl = null;
     if (req.file) {
       imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
     }
     const result = await pool.query(
-      `INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, imagen_url) VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [cliente_id, titulo, categoria, descripcion, imagenUrl]
+      `INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, imagen_url, profesional_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [cliente_id, titulo, categoria, descripcion, imagenUrl, profesional_id || null]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -315,7 +340,7 @@ app.post("/api/solicitudes", upload.single('imagen'), async (req, res) => {
 app.get("/api/solicitudes/cliente/:clienteId", async (req, res) => {
   try {
     const { clienteId } = req.params;
-    const result = await pool.query("SELECT * FROM solicitudes WHERE cliente_id = $1 ORDER BY fecha_creacion DESC", [clienteId]);
+    const result = await pool.query("SELECT * FROM solicitudes WHERE cliente_id = $1 AND estado != 'FINALIZADA' ORDER BY fecha_creacion DESC", [clienteId]);
     res.json(result.rows);
   } catch (error) {
     console.error("Error obteniendo solicitudes del cliente:", error);
@@ -325,14 +350,23 @@ app.get("/api/solicitudes/cliente/:clienteId", async (req, res) => {
 
 app.get("/api/solicitudes", async (req, res) => {
   try {
-    // Para el dashboard del profesional, cargamos solicitudes pendientes
-    const result = await pool.query(`
+    const { profesional_id } = req.query;
+    let query = `
       SELECT s.*, c.nombre as cliente_nombre, c.avatar as cliente_avatar, c.direccion as cliente_direccion
       FROM solicitudes s
       LEFT JOIN clientes c ON s.cliente_id::text = c.usuario_id::text
       WHERE s.estado = 'pendiente'
-      ORDER BY s.fecha_creacion DESC
-    `);
+    `;
+    const params = [];
+    if (profesional_id) {
+      query += ` AND (s.profesional_id IS NULL OR s.profesional_id::text = $1) `;
+      params.push(profesional_id);
+    } else {
+      query += ` AND s.profesional_id IS NULL `;
+    }
+    query += ` ORDER BY s.fecha_creacion DESC`;
+
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (error) {
     console.error("Error obteniendo todas las solicitudes:", error);
@@ -351,6 +385,37 @@ app.put("/api/solicitudes/:id/finalizar", async (req, res) => {
     res.json(result.rows[0]);
   } catch (error) {
     console.error("Error finalizando solicitud:", error);
+    res.status(500).json({ error: "Error servidor" });
+  }
+});
+
+app.put("/api/solicitudes/:id/progreso", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { profesional_id } = req.body;
+    const result = await pool.query(
+      `UPDATE solicitudes SET estado = 'en_progreso', profesional_id = $1 WHERE id = $2 RETURNING *`,
+      [profesional_id, id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: "Solicitud no encontrada" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error actualizando solicitud a progreso:", error);
+    res.status(500).json({ error: "Error servidor" });
+  }
+});
+
+app.put("/api/solicitudes/cliente/:clienteId/aceptar", async (req, res) => {
+  try {
+    const { clienteId } = req.params;
+    const { profesional_id } = req.body;
+    const result = await pool.query(
+      `UPDATE solicitudes SET estado = 'en_progreso', profesional_id = $1 WHERE cliente_id = $2 AND estado = 'pendiente' RETURNING *`,
+      [profesional_id, clienteId]
+    );
+    res.json({ success: true, actualizadas: result.rowCount });
+  } catch (error) {
+    console.error("Error aceptando solicitudes del cliente:", error);
     res.status(500).json({ error: "Error servidor" });
   }
 });
@@ -448,7 +513,7 @@ io.on("connection", (socket) => {
   socket.on("join_conversation", (conversacionId) => {
     socket.join(`conv_${conversacionId}`);
   });
-  
+
   socket.on("send_message", async (data) => {
     const { conversacion_id, remitente_id, contenido } = data;
     try {

@@ -158,6 +158,28 @@ app.post("/api/google", async (req, res) => {
   }
 });
 
+app.put("/api/users/deactivate", async (req, res) => {
+  const { userId } = req.body;
+  try {
+    await pool.query("UPDATE usuarios SET activo = false WHERE id = $1", [userId]);
+    res.json({ success: true, message: "Usuario desactivado temporalmente" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al desactivar el usuario" });
+  }
+});
+
+app.delete("/api/users/:id", async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query("DELETE FROM usuarios WHERE id = $1", [id]);
+    res.json({ success: true, message: "Usuario eliminado correctamente" });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Error al eliminar el usuario" });
+  }
+});
+
 app.listen(process.env.PORT || 3000, () => {
   console.log(` Servidor Auth corriendo en puerto ${process.env.PORT || 3000}`);
 });

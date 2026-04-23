@@ -102,9 +102,54 @@ app.get('/api/settings/sessions', async (req, res) => {
 app.delete('/api/settings/sessions/:id', async (req, res) => res.json({ success: true }));
 app.delete('/api/settings/sessions', async (req, res) => res.json({ success: true }));
 
-// 6. Danger Zone
-app.post('/api/settings/deactivate', async (req, res) => res.json({ success: true }));
-app.delete('/api/settings/account', async (req, res) => res.json({ success: true }));
+app.post('/api/settings/deactivate', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const authRes = await fetch('http://localhost:3000/api/users/deactivate', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId })
+    });
+    
+    if (!authRes.ok) throw new Error("Error en auth-service");
+    
+    // Si necesitas hacer limpieza en otras tablas de pago-service relacionadas a userId, iría aquí.
+    
+    res.json({ success: true, message: "Cuenta desactivada correctamente" });
+  } catch (error) {
+    console.error("Error desactivando cuenta:", error);
+    res.status(500).json({ success: false, message: "Error interno al desactivar cuenta" });
+  }
+});
+
+app.delete('/api/settings/account', async (req, res) => {
+  try {
+    const { userId } = req.body; // Viene en data gracias a axios.delete(.., { data: ... })
+
+    // Se asume que el usuario puede tener un perfil de cliente o profesional. 
+    // Lo borramos del microservicio de perfiles para que no aparezca en las listas de la plataforma
+    try {
+      const perfilesRes = await fetch(`http://localhost:3001/api/perfiles/usuario/${userId}`, {
+        method: 'DELETE'
+      });
+      if (!perfilesRes.ok) console.warn("Aviso: el usuario pudo no tener perfil o falló la eliminación en perfiles-service.");
+    } catch(err) {
+      console.warn("Fallo en la comunicación con perfiles-service: ", err.message);
+    }
+    
+    // Y lo borramos de auth-service de forma definitiva centralizada
+    const authRes = await fetch(`http://localhost:3000/api/users/${userId}`, {
+      method: 'DELETE'
+    });
+    
+    if (!authRes.ok) throw new Error("Error eliminando en auth-service");
+
+    res.json({ success: true, message: "Cuenta eliminada correctamente de toda la plataforma" });
+  } catch (error) {
+    console.error("Error eliminando cuenta:", error);
+    res.status(500).json({ success: false, message: "Error interno al eliminar cuenta" });
+  }
+});
 
 const PORT = process.env.PORT || 3002;
 
