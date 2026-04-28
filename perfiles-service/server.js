@@ -106,7 +106,9 @@ app.get("/api/profesionales", async (req, res) => {
         (SELECT STRING_AGG(h.nombre, ', ') FROM habilidades h JOIN profesional_habilidades ph ON ph.habilidad_id = h.id WHERE ph.profesional_id = p.id) as habilidades,
         (SELECT imagen_url FROM trabajos_portafolio tp WHERE tp.profesional_id = p.id ORDER BY id DESC LIMIT 1) as foto_reciente
       FROM profesionales p
-      WHERE 1=1
+      WHERE p.activo = true 
+        AND p.nombre IS NOT NULL AND p.nombre != ''
+        AND p.profesion IS NOT NULL AND p.profesion != ''
     `;
     const params = [];
     let i = 1;
@@ -321,14 +323,15 @@ initChatTables();
 // ==========================================
 app.post("/api/solicitudes", upload.single('imagen'), async (req, res) => {
   try {
-    const { cliente_id, titulo, categoria, descripcion, profesional_id } = req.body;
+    const { cliente_id, titulo, categoria, descripcion, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max } = req.body;
     let imagenUrl = null;
     if (req.file) {
       imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
     }
     const result = await pool.query(
-      `INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, imagen_url, profesional_id) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [cliente_id, titulo, categoria, descripcion, imagenUrl, profesional_id || null]
+      `INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, imagen_url, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+      [cliente_id, titulo, categoria, descripcion, imagenUrl, profesional_id || null, urgencia || null, ubicacion || null, disponibilidad || null, presupuesto_min || null, presupuesto_max || null]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -424,18 +427,55 @@ app.put("/api/solicitudes/cliente/:clienteId/aceptar", async (req, res) => {
 // RUTAS DE CHAT (REST)
 // ==========================================
 app.post("/api/chat/conversacion", async (req, res) => {
-  const { cliente_id, profesional_usuario_id } = req.body;
+  const { cliente_id, profesional_usuario_id, solicitud_titulo, solicitud_descripcion } = req.body;
   if (!cliente_id || !profesional_usuario_id) return res.status(400).json({ error: "Faltan datos" });
   try {
-    await pool.query(
-      `INSERT INTO conversaciones (cliente_id, profesional_usuario_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+    // Check if conversation already exists
+    const existing = await pool.query(
+      `SELECT * FROM conversaciones WHERE cliente_id = $1 AND profesional_usuario_id = $2`,
       [cliente_id, profesional_usuario_id]
     );
+
+    let conv;
+    const isNew = existing.rows.length === 0;
+
+    if (isNew) {
+      // Create new conversation
+      await pool.query(
+        `INSERT INTO conversaciones (cliente_id, profesional_usuario_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [cliente_id, profesional_usuario_id]
+      );
+    }
+
     const result = await pool.query(
       `SELECT * FROM conversaciones WHERE cliente_id = $1 AND profesional_usuario_id = $2`,
       [cliente_id, profesional_usuario_id]
     );
-    res.json(result.rows[0]);
+    conv = result.rows[0];
+
+    // If solicitud_titulo is provided (from job acceptance), insert auto-messages
+    if (solicitud_titulo) {
+      const msgCliente = solicitud_descripcion
+        ? `📋 Solicitud enviada: "${solicitud_titulo}"\n\n${solicitud_descripcion}`
+        : `📋 Solicitud enviada: "${solicitud_titulo}"`;
+      
+      // Message 1: from client
+      await pool.query(
+        `INSERT INTO mensajes (conversacion_id, remitente_id, contenido) VALUES ($1, $2, $3)`,
+        [conv.id, cliente_id, msgCliente]
+      );
+
+      // Message 2: from professional
+      await pool.query(
+        `INSERT INTO mensajes (conversacion_id, remitente_id, contenido) VALUES ($1, $2, $3)`,
+        [conv.id, profesional_usuario_id, `✅ Solicitud aceptada. ¡Hola! He aceptado tu solicitud y estoy listo para comenzar. ¿Cuándo podemos coordinar los detalles?`]
+      );
+
+      // Emit via socket if possible (though conv.id might not be joined yet)
+      // io.to(`conv_${conv.id}`).emit("new_message", ...); 
+    }
+
+    res.json(conv);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

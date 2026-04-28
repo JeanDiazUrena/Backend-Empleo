@@ -1,1 +1,0 @@
-import pool from './db.js'; pool.query('SELECT data_type FROM information_schema.columns WHERE table_name = ''trabajos'' AND column_name = ''solicitud_id''').then(res => { console.log(res.rows); pool.end(); });

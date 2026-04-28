@@ -1,1 +1,0 @@
-import pool from './db.js'; pool.query('SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_name IN (''resenas'', ''acciones_trabajo'')').then(res => { console.table(res.rows); pool.end(); }).catch(e => {console.error(e); pool.end();});

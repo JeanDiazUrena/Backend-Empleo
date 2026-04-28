@@ -14,11 +14,26 @@ app.get('/', (req, res) => {
     res.json({ message: "Servicio de Trabajos (Trabajos-Perfil) está corriendo correctamente." });
 });
 
+// SCHEMA UPDATE
+const initDB = async () => {
+    try {
+        await pool.query(`
+            ALTER TABLE trabajos 
+            ADD COLUMN IF NOT EXISTS horario TEXT,
+            ADD COLUMN IF NOT EXISTS presupuesto TEXT;
+        `);
+        console.log("Tabla trabajos actualizada con columnas horario y presupuesto");
+    } catch (err) {
+        console.error("Error inicializando BD:", err.message);
+    }
+};
+initDB();
+
 // =========================================================================
 // RUTA: CREAR TRABAJO (CONTRATAR)
 // =========================================================================
 app.post('/api/trabajos', async (req, res) => {
-    const { cliente_id, profesional_id, solicitud_id } = req.body;
+    const { cliente_id, profesional_id, solicitud_id, titulo, descripcion, horario, presupuesto } = req.body;
 
     if (!cliente_id || !profesional_id) {
         return res.status(400).json({ error: 'Faltan cliente_id o profesional_id' });
@@ -26,9 +41,9 @@ app.post('/api/trabajos', async (req, res) => {
 
     try {
         const result = await pool.query(
-            `INSERT INTO trabajos (cliente_id, profesional_id, solicitud_id, estado) 
-             VALUES ($1, $2, $3, 'EN_PROGRESO') RETURNING *`,
-            [cliente_id, profesional_id, solicitud_id || null]
+            `INSERT INTO trabajos (cliente_id, profesional_id, solicitud_id, estado, titulo, descripcion, horario, presupuesto) 
+             VALUES ($1, $2, $3, 'EN_PROGRESO', $4, $5, $6, $7) RETURNING *`,
+            [cliente_id, profesional_id, solicitud_id || null, titulo || null, descripcion || null, horario || null, presupuesto || null]
         );
 
         // Update the solicitud in perfiles-service so it disappears from the professional's feed
@@ -242,17 +257,33 @@ app.post('/api/trabajos/:id/resena', async (req, res) => {
 });
 
 // =========================================================================
-// RUTA: OBTENER TRABAJOS DE CLIENTE
+// RUTA: OBTENER TRABAJOS ACTIVOS DE CLIENTE (excluye los finalizados/confirmados)
 // =========================================================================
 app.get('/api/trabajos/cliente/:id', async (req, res) => {
     try {
         const result = await pool.query(
-            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado != 'CONFIRMADO_CLIENTE' ORDER BY fecha_creacion DESC",
+            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL') ORDER BY fecha_creacion DESC",
             [req.params.id]
         );
         res.json(result.rows);
     } catch (error) {
         console.error('Error buscando trabajos del cliente:', error.message);
+        res.status(500).json({ error: 'Error del servidor' });
+    }
+});
+
+// =========================================================================
+// RUTA: HISTORIAL DE TRABAJOS COMPLETADOS DE CLIENTE
+// =========================================================================
+app.get('/api/trabajos/cliente/:id/historial', async (req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado = 'CONFIRMADO_CLIENTE' ORDER BY fecha_creacion DESC",
+            [req.params.id]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error('Error buscando historial del cliente:', error.message);
         res.status(500).json({ error: 'Error del servidor' });
     }
 });
