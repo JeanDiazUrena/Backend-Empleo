@@ -153,6 +153,64 @@ app.get("/api/profesionales/:usuarioId", async (req, res) => {
 });
 
 // ==========================================
+// RUTAS FINANCIERAS (PARA TRABAJOS-SERVICE)
+// ==========================================
+app.get("/api/profesionales/:usuarioId/financiero", async (req, res) => {
+  try {
+    const { usuarioId } = req.params;
+    const result = await pool.query("SELECT stripe_card_token, cuenta_bancaria, banco, estado_financiero FROM profesionales WHERE usuario_id = $1", [usuarioId]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "No encontrado" });
+    res.json(result.rows[0]);
+  } catch (error) { res.status(500).json({ error: "Error servidor" }); }
+});
+
+app.put("/api/profesionales/:usuarioId/bloquear", async (req, res) => {
+  try {
+    const { usuarioId } = req.params;
+    await pool.query("UPDATE profesionales SET estado_financiero = 'bloqueado_por_deuda' WHERE usuario_id = $1", [usuarioId]);
+    res.json({ message: "Usuario bloqueado" });
+  } catch (error) { res.status(500).json({ error: "Error servidor" }); }
+});
+
+app.put("/api/profesionales/:usuarioId/financiero", async (req, res) => {
+  const { usuarioId } = req.params;
+  const { stripe_card_token, cuenta_bancaria, banco } = req.body;
+  
+  console.log("--- INTENTANDO GUARDAR DATOS FINANCIEROS ---");
+  console.log("ID Usuario:", usuarioId);
+  console.log("Datos:", { stripe_card_token, cuenta_bancaria, banco });
+
+  try {
+    // 1. Verificar si el profesional ya existe
+    const check = await pool.query("SELECT id FROM profesionales WHERE usuario_id = $1", [usuarioId]);
+    
+    if (check.rows.length > 0) {
+      console.log("Profesional encontrado, actualizando...");
+      await pool.query(
+        "UPDATE profesionales SET stripe_card_token = $1, cuenta_bancaria = $2, banco = $3 WHERE usuario_id = $4",
+        [stripe_card_token, cuenta_bancaria, banco, usuarioId]
+      );
+    } else {
+      console.log("Profesional NO encontrado, creando registro base...");
+      await pool.query(
+        `INSERT INTO profesionales (
+          usuario_id, stripe_card_token, cuenta_bancaria, banco, 
+          nombre, profesion, biografia, ciudad, sector, telefono, anios_experiencia, activo
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [usuarioId, stripe_card_token, cuenta_bancaria, banco, 'Profesional', 'Sin especificar', '', 'Sin especificar', 'Sin especificar', '000-000-0000', 0, true]
+      );
+    }
+
+    console.log("¡Guardado exitoso!");
+    res.json({ message: "Datos financieros actualizados exitosamente" });
+  } catch (error) { 
+    console.error("ERROR CRÍTICO EN GUARDADO FINANCIERO:");
+    console.error(error);
+    res.status(500).json({ error: "Error en el servidor: " + error.message }); 
+  }
+});
+
+// ==========================================
 // RUTAS DE PORTAFOLIO
 // ==========================================
 app.post("/api/portfolio", upload.single('imagen'), async (req, res) => {
@@ -293,10 +351,14 @@ const initChatTables = async () => {
         conversacion_id INTEGER REFERENCES conversaciones(id) ON DELETE CASCADE,
         remitente_id UUID NOT NULL,
         contenido TEXT NOT NULL,
+        tipo VARCHAR(20) DEFAULT 'texto',
         leido BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       )
     `);
+    
+    // Migración para columna tipo si no existe
+    await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'texto'`);
 
     // TABLA SOLICITUDES
     await pool.query(`
@@ -306,9 +368,17 @@ const initChatTables = async () => {
         titulo VARCHAR(255) NOT NULL,
         categoria VARCHAR(255) NOT NULL,
         descripcion TEXT NOT NULL,
+        urgencia VARCHAR(50),
+        ubicacion VARCHAR(255),
+        disponibilidad VARCHAR(100),
+        presupuesto_min DECIMAL(12,2),
+        presupuesto_max DECIMAL(12,2),
         imagen_url TEXT,
+        profesional_id UUID,
         estado VARCHAR(50) DEFAULT 'pendiente',
-        fecha_creacion TIMESTAMP DEFAULT NOW()
+        metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
+        fecha_creacion TIMESTAMP DEFAULT NOW(),
+        CONSTRAINT fk_profesional FOREIGN KEY (profesional_id) REFERENCES profesionales(id) ON DELETE SET NULL
       )
     `);
     console.log("Tablas de chat y solicitudes listas");
@@ -323,15 +393,14 @@ initChatTables();
 // ==========================================
 app.post("/api/solicitudes", upload.single('imagen'), async (req, res) => {
   try {
-    const { cliente_id, titulo, categoria, descripcion, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max } = req.body;
+    const { cliente_id, titulo, categoria, descripcion, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, metodo_pago } = req.body;
     let imagenUrl = null;
     if (req.file) {
       imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
     }
     const result = await pool.query(
-      `INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, imagen_url, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
-      [cliente_id, titulo, categoria, descripcion, imagenUrl, profesional_id || null, urgencia || null, ubicacion || null, disponibilidad || null, presupuesto_min || null, presupuesto_max || null]
+      "INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, profesional_id, imagen_url, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, metodo_pago) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *",
+      [cliente_id, titulo, categoria, descripcion, profesional_id || null, imagenUrl, urgencia, ubicacion, disponibilidad, presupuesto_min || null, presupuesto_max || null, metodo_pago || 'EFECTIVO']
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -505,7 +574,8 @@ app.get("/api/chat/conversaciones/profesional/:usuarioId", async (req, res) => {
         cl.nombre as otro_nombre, cl.avatar as otro_avatar, NULL as otro_sub,
         (SELECT m.contenido FROM mensajes m WHERE m.conversacion_id = c.id ORDER BY m.created_at DESC LIMIT 1) as ultimo_mensaje,
         (SELECT m.created_at FROM mensajes m WHERE m.conversacion_id = c.id ORDER BY m.created_at DESC LIMIT 1) as ultimo_mensaje_fecha,
-        (SELECT COUNT(*) FROM mensajes m WHERE m.conversacion_id = c.id AND m.remitente_id::text != $1 AND m.leido = false)::int as no_leidos
+        (SELECT COUNT(*) FROM mensajes m WHERE m.conversacion_id = c.id AND m.remitente_id::text != $1 AND m.leido = false)::int as no_leidos,
+        (SELECT metodo_pago FROM solicitudes WHERE cliente_id = c.cliente_id::uuid AND (profesional_id::text = $1 OR profesional_id IS NULL) ORDER BY fecha_creacion DESC LIMIT 1) as metodo_pago
       FROM conversaciones c
       LEFT JOIN clientes cl ON cl.usuario_id::text = c.cliente_id::text
       WHERE c.profesional_usuario_id::text = $1
@@ -537,6 +607,31 @@ app.put("/api/chat/leer/:conversacionId", async (req, res) => {
 });
 
 // ==========================================
+// CARGA DE ARCHIVOS EN EL CHAT
+// ==========================================
+app.post("/api/chat/upload", upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: "No se subió ningún archivo" });
+  const fileUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+  res.json({ url: fileUrl, filename: req.file.originalname, mimetype: req.file.mimetype });
+});
+
+app.get("/api/chat/unread-count/:usuarioId", async (req, res) => {
+  const { usuarioId } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*)::int as count 
+       FROM mensajes m
+       JOIN conversaciones c ON m.conversacion_id = c.id
+       WHERE (c.cliente_id::text = $1 OR c.profesional_usuario_id::text = $1)
+       AND m.remitente_id::text != $1
+       AND m.leido = false`,
+      [usuarioId]
+    );
+    res.json(result.rows[0]);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ==========================================
 // SOCKET.IO — TIEMPO REAL
 // ==========================================
 const connectedUsers = new Set(); // Guardará los IDs de usuarios online
@@ -555,17 +650,25 @@ io.on("connection", (socket) => {
   });
 
   socket.on("send_message", async (data) => {
-    const { conversacion_id, remitente_id, contenido } = data;
+    const { conversacion_id, remitente_id, contenido, tipo } = data;
     try {
       const result = await pool.query(
-        `INSERT INTO mensajes (conversacion_id, remitente_id, contenido) VALUES ($1, $2, $3) RETURNING *`,
-        [conversacion_id, remitente_id, contenido]
+        `INSERT INTO mensajes (conversacion_id, remitente_id, contenido, tipo) VALUES ($1, $2, $3, $4) RETURNING *`,
+        [conversacion_id, remitente_id, contenido, tipo || 'texto']
       );
       // Incluir el avatar del remitente o nombre extra opcional
-      io.to(`conv_${conversacion_id}`).emit("new_message", result.rows[0]);
+      const newMsg = result.rows[0];
+      io.to(`conv_${conversacion_id}`).emit("new_message", newMsg);
+      // Emitir notificación global para que los layouts se enteren
+      io.emit("notification_new_message", newMsg);
     } catch (err) {
       console.error("Error en socket send_message:", err.message);
     }
+  });
+
+  socket.on("messages_read", (data) => {
+    // Notificar a todos que se han leído mensajes para actualizar contadores globales
+    io.emit("update_unread_count", { usuarioId: data.usuarioId });
   });
 
   socket.on("disconnect", () => {
