@@ -373,13 +373,21 @@ const initChatTables = async () => {
         disponibilidad VARCHAR(100),
         presupuesto_min DECIMAL(12,2),
         presupuesto_max DECIMAL(12,2),
+        monto_acordado NUMERIC(12,2),
         imagen_url TEXT,
         profesional_id UUID,
         estado VARCHAR(50) DEFAULT 'pendiente',
         metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
+        estado_pago VARCHAR(50) DEFAULT 'PENDIENTE',
         fecha_creacion TIMESTAMP DEFAULT NOW(),
         CONSTRAINT fk_profesional FOREIGN KEY (profesional_id) REFERENCES profesionales(id) ON DELETE SET NULL
       )
+    `);
+    await pool.query(`
+      ALTER TABLE solicitudes
+      ADD COLUMN IF NOT EXISTS monto_acordado NUMERIC(12,2),
+      ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
+      ADD COLUMN IF NOT EXISTS estado_pago VARCHAR(50) DEFAULT 'PENDIENTE'
     `);
     console.log("Tablas de chat y solicitudes listas");
   } catch (err) {
@@ -393,14 +401,14 @@ initChatTables();
 // ==========================================
 app.post("/api/solicitudes", upload.single('imagen'), async (req, res) => {
   try {
-    const { cliente_id, titulo, categoria, descripcion, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, metodo_pago } = req.body;
+    const { cliente_id, titulo, categoria, descripcion, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, monto_acordado, metodo_pago } = req.body;
     let imagenUrl = null;
     if (req.file) {
       imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
     }
     const result = await pool.query(
-      "INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, profesional_id, imagen_url, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, metodo_pago) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *",
-      [cliente_id, titulo, categoria, descripcion, profesional_id || null, imagenUrl, urgencia, ubicacion, disponibilidad, presupuesto_min || null, presupuesto_max || null, metodo_pago || 'EFECTIVO']
+      "INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, profesional_id, imagen_url, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, monto_acordado, metodo_pago, estado_pago) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'PENDIENTE') RETURNING *",
+      [cliente_id, titulo, categoria, descripcion, profesional_id || null, imagenUrl, urgencia, ubicacion, disponibilidad, presupuesto_min || null, presupuesto_max || null, monto_acordado || presupuesto_max || presupuesto_min || null, (metodo_pago || 'EFECTIVO').toUpperCase()]
     );
     res.json(result.rows[0]);
   } catch (error) {
@@ -417,6 +425,18 @@ app.get("/api/solicitudes/cliente/:clienteId", async (req, res) => {
   } catch (error) {
     console.error("Error obteniendo solicitudes del cliente:", error);
     res.status(500).json({ error: "Error obteniendo solicitudes" });
+  }
+});
+
+app.get("/api/solicitudes/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query("SELECT * FROM solicitudes WHERE id = $1", [id]);
+    if (result.rows.length === 0) return res.status(404).json({ error: "Solicitud no encontrada" });
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error("Error obteniendo solicitud:", error);
+    res.status(500).json({ error: "Error obteniendo solicitud" });
   }
 });
 

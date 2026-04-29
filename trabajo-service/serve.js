@@ -9,6 +9,29 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+const COMMISSION_RATE = 0.10;
+
+const normalizePaymentMethod = (method) => {
+    const normalized = String(method || 'EFECTIVO').trim().toUpperCase();
+    if (normalized === 'TARJETA') return 'TARJETA_CREDITO';
+    if (['EFECTIVO', 'TRANSFERENCIA', 'TARJETA_CREDITO'].includes(normalized)) return normalized;
+    return 'EFECTIVO';
+};
+
+const parseMoney = (value) => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+
+    const matches = String(value).match(/\d+(?:[.,]\d+)*/g);
+    if (!matches) return null;
+
+    const numbers = matches
+        .map((part) => Number(part.replace(/,/g, '')))
+        .filter((amount) => Number.isFinite(amount));
+
+    return numbers.length > 0 ? Math.max(...numbers) : null;
+};
+
 // RUTA RAIZ DE PRUEBA
 app.get('/', (req, res) => {
     res.json({ message: "Servicio de Trabajos (Trabajos-Perfil) está corriendo correctamente." });
@@ -22,7 +45,65 @@ const initDB = async () => {
             ADD COLUMN IF NOT EXISTS horario TEXT,
             ADD COLUMN IF NOT EXISTS presupuesto TEXT,
             ADD COLUMN IF NOT EXISTS cliente_nombre TEXT,
-            ADD COLUMN IF NOT EXISTS categoria TEXT;
+            ADD COLUMN IF NOT EXISTS categoria TEXT,
+            ADD COLUMN IF NOT EXISTS monto_acordado NUMERIC(12, 2),
+            ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
+            ADD COLUMN IF NOT EXISTS estado_pago VARCHAR(50) DEFAULT 'PENDIENTE',
+            ADD COLUMN IF NOT EXISTS monto_comision NUMERIC(12, 2) DEFAULT 0;
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS billetera_profesional (
+                profesional_id UUID PRIMARY KEY,
+                balance NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                total_comisiones_debitadas NUMERIC(12, 2) NOT NULL DEFAULT 0,
+                fecha_actualizacion TIMESTAMP DEFAULT NOW()
+            );
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS movimientos_billetera (
+                id SERIAL PRIMARY KEY,
+                profesional_id UUID NOT NULL,
+                trabajo_id UUID REFERENCES trabajos(id) ON DELETE SET NULL,
+                tipo VARCHAR(50) NOT NULL,
+                monto NUMERIC(12, 2) NOT NULL,
+                descripcion TEXT,
+                fecha_creacion TIMESTAMP DEFAULT NOW()
+            );
+        `);
+        await pool.query(`
+            ALTER TABLE trabajos
+            ALTER COLUMN metodo_pago TYPE VARCHAR(50) USING UPPER(metodo_pago::text),
+            ALTER COLUMN metodo_pago SET DEFAULT 'EFECTIVO';
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS cotizaciones (
+                id SERIAL PRIMARY KEY,
+                trabajo_id UUID REFERENCES trabajos(id) ON DELETE SET NULL,
+                solicitud_id INTEGER,
+                conversacion_id INTEGER,
+                cliente_id UUID NOT NULL,
+                profesional_id UUID NOT NULL,
+                titulo TEXT,
+                descripcion TEXT,
+                monto_total NUMERIC(12, 2) NOT NULL CHECK (monto_total >= 0),
+                porcentaje_comision NUMERIC(5, 2) DEFAULT 10.00 CHECK (porcentaje_comision >= 0 AND porcentaje_comision <= 100),
+                monto_comision NUMERIC(12, 2) GENERATED ALWAYS AS (monto_total * (porcentaje_comision / 100.0)) STORED,
+                metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
+                estado VARCHAR(50) DEFAULT 'PENDIENTE',
+                fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        await pool.query(`
+            ALTER TABLE cotizaciones
+            ALTER COLUMN trabajo_id DROP NOT NULL,
+            ADD COLUMN IF NOT EXISTS conversacion_id INTEGER,
+            ADD COLUMN IF NOT EXISTS solicitud_id INTEGER,
+            ADD COLUMN IF NOT EXISTS cliente_id UUID,
+            ADD COLUMN IF NOT EXISTS profesional_id UUID,
+            ADD COLUMN IF NOT EXISTS titulo TEXT,
+            ADD COLUMN IF NOT EXISTS descripcion TEXT,
+            ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
+            ADD COLUMN IF NOT EXISTS estado VARCHAR(50) DEFAULT 'PENDIENTE';
         `);
         console.log("Tabla trabajos actualizada con columnas adicionales");
     } catch (err) {
@@ -42,10 +123,41 @@ app.post('/api/trabajos', async (req, res) => {
     }
 
     try {
+        let metodoPago = normalizePaymentMethod(req.body.metodo_pago);
+        let montoAcordado = parseMoney(req.body.monto_acordado ?? req.body.monto_total ?? presupuesto);
+
+        if (solicitud_id) {
+            try {
+                const solicitudRes = await fetch(`http://localhost:3001/api/solicitudes/${solicitud_id}`);
+                if (solicitudRes.ok) {
+                    const solicitud = await solicitudRes.json();
+                    metodoPago = normalizePaymentMethod(req.body.metodo_pago || solicitud.metodo_pago);
+                    montoAcordado = montoAcordado ?? parseMoney(solicitud.monto_acordado ?? solicitud.presupuesto_max ?? solicitud.presupuesto_min);
+                }
+            } catch (err) {
+                console.error("No se pudo leer la solicitud para copiar pago/monto:", err.message);
+            }
+        }
+
         const result = await pool.query(
-            `INSERT INTO trabajos (cliente_id, profesional_id, solicitud_id, estado, titulo, descripcion, horario, presupuesto, cliente_nombre, categoria) 
-             VALUES ($1, $2, $3, 'EN_PROGRESO', $4, $5, $6, $7, $8, $9) RETURNING *`,
-            [cliente_id, profesional_id, solicitud_id || null, titulo || null, descripcion || null, horario || null, presupuesto || null, cliente_nombre || null, categoria || null]
+            `INSERT INTO trabajos (
+                cliente_id, profesional_id, solicitud_id, estado, titulo, descripcion, horario,
+                presupuesto, cliente_nombre, categoria, monto_acordado, metodo_pago, estado_pago
+             ) 
+             VALUES ($1, $2, $3, 'EN_PROGRESO', $4, $5, $6, $7, $8, $9, $10, $11, 'PENDIENTE') RETURNING *`,
+            [
+                cliente_id,
+                profesional_id,
+                solicitud_id || null,
+                titulo || null,
+                descripcion || null,
+                horario || null,
+                presupuesto || null,
+                cliente_nombre || null,
+                categoria || null,
+                montoAcordado,
+                metodoPago
+            ]
         );
 
         // Update the solicitud in perfiles-service so it disappears from the professional's feed
@@ -76,6 +188,239 @@ app.post('/api/trabajos', async (req, res) => {
     } catch (error) {
         console.error('Error al crear el trabajo:', error.message);
         res.status(500).json({ error: 'Error interno del servidor al crear el trabajo' });
+    }
+});
+
+// =========================================================================
+// RUTA: CREAR COTIZACION DESDE CHAT
+// =========================================================================
+app.post('/api/cotizaciones', async (req, res) => {
+    const {
+        conversacion_id,
+        solicitud_id,
+        cliente_id,
+        profesional_id,
+        titulo,
+        descripcion,
+        monto_total,
+        metodo_pago
+    } = req.body;
+
+    const montoTotal = Number(monto_total);
+    if (!solicitud_id || !cliente_id || !profesional_id || !Number.isFinite(montoTotal) || montoTotal <= 0) {
+        return res.status(400).json({ error: 'Faltan datos de cotizacion o el monto no es valido' });
+    }
+
+    try {
+        const result = await pool.query(
+            `INSERT INTO cotizaciones (
+                conversacion_id, solicitud_id, cliente_id, profesional_id, titulo, descripcion,
+                monto_total, porcentaje_comision, metodo_pago, estado
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'PENDIENTE')
+             RETURNING *`,
+            [
+                conversacion_id || null,
+                solicitud_id || null,
+                cliente_id,
+                profesional_id,
+                titulo || 'Cotizacion de servicio',
+                descripcion || null,
+                montoTotal,
+                COMMISSION_RATE * 100,
+                normalizePaymentMethod(metodo_pago)
+            ]
+        );
+
+        res.status(201).json({ success: true, cotizacion: result.rows[0] });
+    } catch (error) {
+        console.error('Error creando cotizacion:', error.message);
+        res.status(500).json({ error: 'Error interno al crear la cotizacion' });
+    }
+});
+
+// =========================================================================
+// RUTA: EDITAR COTIZACION ANTES DE QUE EL TRABAJO TERMINE
+// =========================================================================
+app.put('/api/cotizaciones/:id', async (req, res) => {
+    const cotizacionId = req.params.id;
+    const { profesional_id, solicitud_id, titulo, descripcion, monto_total, metodo_pago } = req.body;
+    const montoTotal = Number(monto_total);
+
+    if (!profesional_id || !Number.isFinite(montoTotal) || montoTotal <= 0) {
+        return res.status(400).json({ error: 'Faltan datos o el monto no es valido' });
+    }
+
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const existing = await client.query(
+            `SELECT c.*, t.estado AS trabajo_estado
+             FROM cotizaciones c
+             LEFT JOIN trabajos t ON t.id = c.trabajo_id
+             WHERE c.id = $1 AND c.profesional_id = $2
+             FOR UPDATE`,
+            [cotizacionId, profesional_id]
+        );
+
+        if (existing.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Cotizacion no encontrada' });
+        }
+
+        const current = existing.rows[0];
+        const editable =
+            current.estado === 'PENDIENTE' ||
+            (current.estado === 'ACEPTADA' && current.trabajo_id && current.trabajo_estado === 'EN_PROGRESO');
+
+        if (!editable) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'La cotizacion ya no se puede editar porque el trabajo fue terminado o confirmado' });
+        }
+
+        const result = await client.query(
+            `UPDATE cotizaciones
+             SET solicitud_id = COALESCE($3, solicitud_id),
+                 titulo = $4,
+                 descripcion = $5,
+                 monto_total = $6,
+                 metodo_pago = $7
+             WHERE id = $1
+               AND profesional_id = $2
+             RETURNING *`,
+            [
+                cotizacionId,
+                profesional_id,
+                solicitud_id || null,
+                titulo || 'Cotizacion de servicio',
+                descripcion || null,
+                montoTotal,
+                normalizePaymentMethod(metodo_pago)
+            ]
+        );
+
+        const cotizacion = result.rows[0];
+        if (cotizacion.trabajo_id) {
+            const presupuesto = `RD$ ${montoTotal.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            await client.query(
+                `UPDATE trabajos
+                 SET titulo = $2,
+                     descripcion = $3,
+                     presupuesto = $4,
+                     monto_acordado = $5,
+                     metodo_pago = $6
+                 WHERE id = $1 AND estado = 'EN_PROGRESO'`,
+                [
+                    cotizacion.trabajo_id,
+                    cotizacion.titulo,
+                    cotizacion.descripcion,
+                    presupuesto,
+                    cotizacion.monto_total,
+                    normalizePaymentMethod(cotizacion.metodo_pago)
+                ]
+            );
+        }
+
+        await client.query('COMMIT');
+        res.json({ success: true, cotizacion });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error editando cotizacion:', error.message);
+        res.status(500).json({ error: 'Error interno al editar la cotizacion' });
+    } finally {
+        client.release();
+    }
+});
+
+// =========================================================================
+// RUTA: CLIENTE ACEPTA COTIZACION Y SE CREA TRABAJO
+// =========================================================================
+app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
+    const cotizacionId = req.params.id;
+    const { cliente_id } = req.body;
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const cotRes = await client.query(
+            `SELECT * FROM cotizaciones WHERE id = $1 FOR UPDATE`,
+            [cotizacionId]
+        );
+
+        if (cotRes.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Cotizacion no encontrada' });
+        }
+
+        const cotizacion = cotRes.rows[0];
+        if (cliente_id && String(cotizacion.cliente_id) !== String(cliente_id)) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Esta cotizacion no pertenece a este cliente' });
+        }
+
+        if (cotizacion.estado === 'ACEPTADA' && cotizacion.trabajo_id) {
+            await client.query('COMMIT');
+            return res.json({ success: true, trabajo_id: cotizacion.trabajo_id, cotizacion });
+        }
+
+        const presupuesto = `RD$ ${Number(cotizacion.monto_total).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        const trabajoRes = await client.query(
+            `INSERT INTO trabajos (
+                cliente_id, profesional_id, solicitud_id, estado, titulo, descripcion, presupuesto,
+                monto_acordado, metodo_pago, estado_pago, cotizacion_id
+             )
+             VALUES ($1, $2, $3, 'EN_PROGRESO', $4, $5, $6, $7, $8, 'PENDIENTE', $9)
+             RETURNING *`,
+            [
+                cotizacion.cliente_id,
+                cotizacion.profesional_id,
+                cotizacion.solicitud_id || null,
+                cotizacion.titulo,
+                cotizacion.descripcion,
+                presupuesto,
+                cotizacion.monto_total,
+                normalizePaymentMethod(cotizacion.metodo_pago),
+                cotizacion.id
+            ]
+        );
+
+        const trabajo = trabajoRes.rows[0];
+        await client.query(
+            `UPDATE cotizaciones
+             SET estado = 'ACEPTADA', trabajo_id = $2
+             WHERE id = $1`,
+            [cotizacion.id, trabajo.id]
+        );
+
+        if (cotizacion.solicitud_id) {
+            try {
+                await fetch(`http://localhost:3001/api/solicitudes/${cotizacion.solicitud_id}/progreso`, {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ profesional_id: cotizacion.profesional_id })
+                });
+            } catch (err) {
+                console.error('Error actualizando solicitud a progreso:', err.message);
+            }
+        }
+
+        await client.query(
+            `INSERT INTO acciones_trabajo (trabajo_id, accion, descripcion, realizado_por)
+             VALUES ($1, 'COTIZACION_ACEPTADA', 'El cliente acepto la cotizacion enviada por chat', $2)`,
+            [trabajo.id, cotizacion.cliente_id]
+        );
+
+        await client.query('COMMIT');
+        res.json({ success: true, trabajo, cotizacion: { ...cotizacion, estado: 'ACEPTADA', trabajo_id: trabajo.id } });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error aceptando cotizacion:', error.message);
+        res.status(500).json({ error: 'Error interno al aceptar la cotizacion' });
+    } finally {
+        client.release();
     }
 });
 
@@ -173,23 +518,103 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
 
         // 2. OBTENER DATOS (JOIN trabajos y cotizaciones)
         const queryJob = `
-            SELECT t.id, t.profesional_id, t.estado, t.metodo_pago,
-                   c.monto_total, c.monto_comision
+            SELECT t.id, t.profesional_id, t.cliente_id, t.solicitud_id, t.estado,
+                   t.metodo_pago, t.monto_acordado, t.presupuesto, t.estado_pago
             FROM trabajos t
-            LEFT JOIN cotizaciones c ON t.cotizacion_id = c.id
             WHERE t.id = $1
+            FOR UPDATE
         `;
         const resultJob = await client.query(queryJob, [trabajo_id]);
 
         if (resultJob.rows.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Trabajo no encontrado' });
         }
 
         const trabajo = resultJob.rows[0];
 
-        if (trabajo.estado === 'COMPLETADO') {
+        if (trabajo.estado === 'CONFIRMADO_CLIENTE' || trabajo.estado_pago === 'LIBERADO') {
+            await client.query('ROLLBACK');
             return res.status(400).json({ error: 'Este trabajo ya fue completado previamente' });
         }
+
+        {
+        const montoAcordado = Number(trabajo.monto_acordado ?? parseMoney(trabajo.presupuesto));
+        if (!Number.isFinite(montoAcordado) || montoAcordado <= 0) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'El trabajo no tiene un monto acordado valido.' });
+        }
+
+        const metodoPago = normalizePaymentMethod(trabajo.metodo_pago);
+        const montoComision = Number((montoAcordado * COMMISSION_RATE).toFixed(2));
+
+        if (metodoPago === 'EFECTIVO' || metodoPago === 'TRANSFERENCIA') {
+            await client.query(
+                `INSERT INTO billetera_profesional (profesional_id, balance)
+                 VALUES ($1, 0)
+                 ON CONFLICT (profesional_id) DO NOTHING`,
+                [trabajo.profesional_id]
+            );
+
+            await client.query(
+                `UPDATE billetera_profesional
+                 SET balance = balance - $2,
+                     total_comisiones_debitadas = total_comisiones_debitadas + $2,
+                     fecha_actualizacion = NOW()
+                 WHERE profesional_id = $1`,
+                [trabajo.profesional_id, montoComision]
+            );
+
+            await client.query(
+                `INSERT INTO movimientos_billetera (profesional_id, trabajo_id, tipo, monto, descripcion)
+                 VALUES ($1, $2, 'DEBITO_COMISION', $3, $4)`,
+                [
+                    trabajo.profesional_id,
+                    trabajo_id,
+                    montoComision,
+                    `Comision ServiHub ${(COMMISSION_RATE * 100).toFixed(0)}% por pago ${metodoPago}`
+                ]
+            );
+        } else if (metodoPago !== 'TARJETA_CREDITO') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Metodo de pago no reconocido o invalido' });
+        }
+
+        await client.query(
+            `UPDATE trabajos
+             SET estado = 'CONFIRMADO_CLIENTE',
+                 estado_pago = 'LIBERADO',
+                 monto_acordado = $2,
+                 monto_comision = $3
+             WHERE id = $1`,
+            [trabajo_id, montoAcordado, montoComision]
+        );
+
+        await client.query(
+            `INSERT INTO acciones_trabajo (trabajo_id, accion, descripcion, realizado_por)
+             VALUES ($1, 'CONFIRMACION_PAGO', 'El cliente confirmo el trabajo y libero el pago', $2)`,
+            [trabajo_id, trabajo.cliente_id]
+        );
+
+        await client.query('COMMIT');
+
+        if (trabajo.solicitud_id) {
+            try {
+                await fetch(`http://localhost:3001/api/solicitudes/${trabajo.solicitud_id}/finalizar`, { method: 'PUT' });
+            } catch (err) {
+                console.error('Error cerrando solicitud en perfiles-service:', err.message);
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            mensaje: 'Trabajo finalizado y pagos/comisiones procesados exitosamente.',
+            monto_acordado: montoAcordado,
+            monto_comision: montoComision,
+            metodo_pago: metodoPago
+        });
+        }
+
         if (!trabajo.monto_comision) {
             return res.status(400).json({ error: 'Falta información de la cotización' });
         }
