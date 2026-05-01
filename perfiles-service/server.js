@@ -410,6 +410,22 @@ app.post("/api/solicitudes", upload.single('imagen'), async (req, res) => {
       "INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, profesional_id, imagen_url, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, monto_acordado, metodo_pago, estado_pago) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'PENDIENTE') RETURNING *",
       [cliente_id, titulo, categoria, descripcion, profesional_id || null, imagenUrl, urgencia, ubicacion, disponibilidad, presupuesto_min || null, presupuesto_max || null, monto_acordado || presupuesto_max || presupuesto_min || null, (metodo_pago || 'EFECTIVO').toUpperCase()]
     );
+
+    if (profesional_id) {
+      try {
+        await fetch('http://localhost:3005/notificaciones', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            user_id: profesional_id,
+            title: 'Nueva Solicitud Recibida',
+            message: `Un cliente ha solicitado tus servicios: "${titulo}"`,
+            type: 'info'
+          })
+        });
+      } catch (err) { console.error('Error enviando notificacion', err); }
+    }
+
     res.json(result.rows[0]);
   } catch (error) {
     console.error("Error creando solicitud:", error);

@@ -9,6 +9,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Logger simple para depuración
+app.use((req, res, next) => {
+    console.log(`${new Date().toLocaleTimeString()} - ${req.method} ${req.url}`);
+    if (req.method === 'POST') console.log('Body:', req.body);
+    next();
+});
+
 // Obtener todas las notificaciones de un usuario
 app.get("/notificaciones/:user_id", async (req, res) => {
     try {

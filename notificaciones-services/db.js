@@ -18,7 +18,7 @@ export const initDB = async () => {
         await pool.query(`
             CREATE TABLE IF NOT EXISTS notificaciones (
                 id SERIAL PRIMARY KEY,
-                user_id INTEGER NOT NULL,
+                user_id VARCHAR(255) NOT NULL,
                 title VARCHAR(255) NOT NULL,
                 message TEXT NOT NULL,
                 type VARCHAR(50) DEFAULT 'info',
