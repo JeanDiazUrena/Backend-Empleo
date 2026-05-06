@@ -1,0 +1,26 @@
+{
+  "name": "backend-em",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "dev": "concurrently \"cd auth-service && npm run dev\" \"cd perfile-service && npm run dev\" \"cd trabajo-service && npm run dev\" \"cd pago-service && npm run dev\" \"cd notificacion-service && npm run dev\" \"cd gateway && npm run dev\"",
+    "start": "concurrently \"cd auth-service && npm start\" \"cd perfile-service && npm start\" \"cd trabajo-service && npm start\" \"cd pago-service && npm start\" \"cd notificacion-service && npm start\" \"cd gateway && npm start\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "http-proxy-middleware": "^4.0.0",
+    "morgan": "^1.10.1",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14"
+  }
+}
