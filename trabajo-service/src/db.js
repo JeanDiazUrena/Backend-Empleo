@@ -66,6 +66,12 @@ export const initDB = async () => {
     // Safe migration: comprobante fields for transfer payment confirmation flow
     await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_url TEXT`).catch(() => {});
     await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_estado VARCHAR(50) DEFAULT 'NINGUNO'`).catch(() => {});
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_trabajos_solicitud_activa
+      ON trabajos (solicitud_id)
+      WHERE solicitud_id IS NOT NULL
+        AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA')
+    `).catch(() => {});
 
     // 3. Acciones Trabajo
     await pool.query(`

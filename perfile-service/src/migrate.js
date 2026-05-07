@@ -24,11 +24,10 @@ const migrate = async () => {
     console.log("🚀 Iniciando migraciones de perfile-service...");
     
     await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
-    await pool.query('CREATE SCHEMA IF NOT EXISTS perfiles');
 
     // Profesionales
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS perfiles.profesionales (
+      CREATE TABLE IF NOT EXISTS profesionales (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         usuario_id UUID UNIQUE NOT NULL,
         nombre VARCHAR(255),
@@ -84,12 +83,12 @@ const migrate = async () => {
     // Relaciones
     await pool.query(`
       CREATE TABLE IF NOT EXISTS profesional_categorias (
-        profesional_id UUID REFERENCES perfiles.profesionales(id) ON DELETE CASCADE,
+        profesional_id UUID REFERENCES profesionales(id) ON DELETE CASCADE,
         categoria_id INTEGER REFERENCES categorias(id) ON DELETE CASCADE,
         PRIMARY KEY (profesional_id, categoria_id)
       );
       CREATE TABLE IF NOT EXISTS profesional_habilidades (
-        profesional_id UUID REFERENCES perfiles.profesionales(id) ON DELETE CASCADE,
+        profesional_id UUID REFERENCES profesionales(id) ON DELETE CASCADE,
         habilidad_id INTEGER REFERENCES habilidades(id) ON DELETE CASCADE,
         PRIMARY KEY (profesional_id, habilidad_id)
       );
@@ -99,7 +98,7 @@ const migrate = async () => {
     await pool.query(`
       CREATE TABLE IF NOT EXISTS trabajos_portafolio (
         id SERIAL PRIMARY KEY,
-        profesional_id UUID REFERENCES perfiles.profesionales(id) ON DELETE CASCADE,
+        profesional_id UUID REFERENCES profesionales(id) ON DELETE CASCADE,
         titulo VARCHAR(255),
         descripcion TEXT,
         imagen_url TEXT,
@@ -148,12 +147,22 @@ const migrate = async () => {
         metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
         estado_pago VARCHAR(50) DEFAULT 'PENDIENTE',
         fecha_creacion TIMESTAMP DEFAULT NOW(),
-        CONSTRAINT fk_profesional FOREIGN KEY (profesional_id) REFERENCES perfiles.profesionales(id) ON DELETE SET NULL
+        CONSTRAINT fk_profesional FOREIGN KEY (profesional_id) REFERENCES profesionales(id) ON DELETE SET NULL
       )
     `);
     await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS monto_acordado NUMERIC(12,2)`);
     await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO'`);
     await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS estado_pago VARCHAR(50) DEFAULT 'PENDIENTE'`);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS solicitud_rechazos (
+        id SERIAL PRIMARY KEY,
+        solicitud_id INTEGER NOT NULL REFERENCES solicitudes(id) ON DELETE CASCADE,
+        profesional_id UUID NOT NULL REFERENCES profesionales(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE (solicitud_id, profesional_id)
+      )
+    `);
 
     console.log("✅ Migraciones completadas.");
     process.exit(0);

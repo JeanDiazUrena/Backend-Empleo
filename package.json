@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "dev": "concurrently \"cd auth-service && npm run dev\" \"cd perfile-service && npm run dev\" \"cd trabajo-service && npm run dev\" \"cd pago-service && npm run dev\" \"cd notificacion-service && npm run dev\" \"cd gateway && npm run dev\"",
+    "dev": "node start-all.js",
     "start": "concurrently \"cd auth-service && npm start\" \"cd perfile-service && npm start\" \"cd trabajo-service && npm start\" \"cd pago-service && npm start\" \"cd notificacion-service && npm start\" \"cd gateway && npm start\""
   },
   "keywords": [],
@@ -12,7 +12,6 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "concurrently": "^9.2.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
@@ -21,6 +20,7 @@
     "pg": "^8.20.0"
   },
   "devDependencies": {
+    "concurrently": "^9.2.1",
     "nodemon": "^3.1.14"
   }
 }

@@ -8,7 +8,12 @@ dotenv.config();
 
 const app = express();
 
-app.use(cors());
+app.use(cors({
+    origin: ["http://localhost:5173", "http://localhost:4000"],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 // 🔐 Middleware para verificar JWT
@@ -173,12 +178,15 @@ app.get("/api/settings/payments/:usuarioId", verificarToken, async (req, res) =>
 app.post("/api/settings/payments", verificarToken, async (req, res) => {
     try {
         console.log("📥 Recibiendo solicitud de pago segura");
-        const { usuario_id, token, brand, last4, exp, holder_name, proveedor } = req.body;
+        const { usuario_id, token, brand, last4, exp, holder_name, proveedor, card_number } = req.body;
+        const normalizedCardNumber = String(card_number || "").replace(/\D/g, "");
+        const resolvedLast4 = last4 || (normalizedCardNumber.length >= 4 ? normalizedCardNumber.slice(-4) : "");
+        const resolvedToken = token || (normalizedCardNumber ? `local-card-${resolvedLast4}-${Date.now()}` : "");
 
-        if (!usuario_id || !token || !last4 || !exp) {
+        if (!usuario_id || !resolvedToken || !resolvedLast4 || !exp) {
             return res.status(400).json({
                 success: false,
-                message: "Datos incompletos (token, last4, exp son requeridos)",
+                message: "Datos incompletos (tarjeta, exp y usuario son requeridos)",
             });
         }
 
@@ -188,7 +196,7 @@ app.post("/api/settings/payments", verificarToken, async (req, res) => {
 
         const result = await pool.query(
             "INSERT INTO metodos_pago (usuario_id, brand, holder_name, last4, exp, token, proveedor) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, brand, last4, exp, proveedor",
-            [usuario_id, brand, holder_name, last4, exp, token, proveedor || 'stripe']
+            [usuario_id, brand, holder_name, resolvedLast4, exp, resolvedToken, proveedor || 'local']
         );
 
         res.json({
