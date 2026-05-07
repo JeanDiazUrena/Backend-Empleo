@@ -381,9 +381,48 @@ const resolveProfesionalProfileId = async (profesionalId) => {
     return profRes.rows[0]?.id || null;
 };
 
+const CLIENT_PROFILE_INCOMPLETE_MESSAGE = "Debes completar tu perfil antes de hacer una solicitud.";
+
+const isClientProfileComplete = (cliente) => {
+    if (!cliente) return false;
+    return Boolean(
+        String(cliente.nombre || "").trim() &&
+        String(cliente.telefono || "").trim() &&
+        String(cliente.direccion || "").trim()
+    );
+};
+
+const getClientProfile = async (clienteId) => {
+    const result = await pool.query(
+        "SELECT nombre, telefono, direccion FROM clientes WHERE usuario_id = $1",
+        [clienteId]
+    );
+    return result.rows[0] || null;
+};
+
+const ensureClientProfileComplete = async (clienteId, res) => {
+    const cliente = await getClientProfile(clienteId);
+    if (isClientProfileComplete(cliente)) return true;
+
+    res.status(403).json({
+        error: CLIENT_PROFILE_INCOMPLETE_MESSAGE,
+        code: "CLIENT_PROFILE_INCOMPLETE"
+    });
+    return false;
+};
+
 app.post("/api/solicitudes", verificarToken, upload.single('imagen'), async (req, res) => {
     try {
         const { cliente_id, titulo, categoria, descripcion, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, monto_acordado, metodo_pago } = req.body;
+        const tokenUserId = req.user?.id;
+
+        if (!cliente_id || String(cliente_id) !== String(tokenUserId)) {
+            return res.status(403).json({ error: "No puedes crear solicitudes para otro cliente" });
+        }
+
+        const clientProfileOk = await ensureClientProfileComplete(cliente_id, res);
+        if (!clientProfileOk) return;
+
         let imagenUrl = null;
         if (req.file) {
             imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
@@ -497,7 +536,7 @@ app.get("/api/solicitudes", async (req, res) => {
             query = `
               SELECT s.*, c.nombre as cliente_nombre, c.avatar as cliente_avatar, c.direccion as cliente_direccion
               FROM solicitudes s
-              LEFT JOIN clientes c ON s.cliente_id::text = c.usuario_id::text
+              JOIN clientes c ON s.cliente_id::text = c.usuario_id::text
               WHERE (
                 (LOWER(s.estado) = 'pendiente'
                   AND (s.profesional_id IS NULL OR s.profesional_id = $1::uuid)
@@ -508,14 +547,20 @@ app.get("/api/solicitudes", async (req, res) => {
                 )
                 OR (LOWER(s.estado) = 'por_confirmar' AND s.profesional_id = $1::uuid)
               )
+              AND NULLIF(TRIM(c.nombre), '') IS NOT NULL
+              AND NULLIF(TRIM(c.telefono), '') IS NOT NULL
+              AND NULLIF(TRIM(c.direccion), '') IS NOT NULL
             `;
         } else {
             // Si no hay id, solo pendientes generales
             query = `
               SELECT s.*, c.nombre as cliente_nombre, c.avatar as cliente_avatar, c.direccion as cliente_direccion
               FROM solicitudes s
-              LEFT JOIN clientes c ON s.cliente_id::text = c.usuario_id::text
+              JOIN clientes c ON s.cliente_id::text = c.usuario_id::text
               WHERE LOWER(s.estado) = 'pendiente' AND s.profesional_id IS NULL
+                AND NULLIF(TRIM(c.nombre), '') IS NOT NULL
+                AND NULLIF(TRIM(c.telefono), '') IS NOT NULL
+                AND NULLIF(TRIM(c.direccion), '') IS NOT NULL
             `;
         }
         query += ` ORDER BY s.fecha_creacion DESC`;
@@ -590,10 +635,24 @@ app.put("/api/solicitudes/:id/postular", async (req, res) => {
              WHERE id = $2::int
                AND LOWER(estado) = 'pendiente'
                AND (profesional_id IS NULL OR profesional_id = $1)
+               AND EXISTS (
+                 SELECT 1 FROM clientes c
+                 WHERE c.usuario_id = solicitudes.cliente_id
+                   AND NULLIF(TRIM(c.nombre), '') IS NOT NULL
+                   AND NULLIF(TRIM(c.telefono), '') IS NOT NULL
+                   AND NULLIF(TRIM(c.direccion), '') IS NOT NULL
+               )
              RETURNING *`,
             [realProfesionalId, id]
         );
-        if (result.rows.length === 0) return res.status(409).json({ error: "Esta solicitud ya no está disponible" });
+        if (result.rows.length === 0) {
+            const solicitudRes = await pool.query("SELECT cliente_id FROM solicitudes WHERE id = $1::int", [id]);
+            if (solicitudRes.rows.length > 0) {
+                const clientProfileOk = await ensureClientProfileComplete(solicitudRes.rows[0].cliente_id, res);
+                if (!clientProfileOk) return;
+            }
+            return res.status(409).json({ error: "Esta solicitud ya no está disponible" });
+        }
         res.json(result.rows[0]);
     } catch (error) {
         console.error("Error al postularse a solicitud:", error);
@@ -694,10 +753,24 @@ app.put("/api/solicitudes/:id/progreso", async (req, res) => {
              SET estado = 'EN_PROGRESO', profesional_id = $1
              WHERE id = $2::int
                AND LOWER(estado) IN ('pendiente', 'por_confirmar')
+               AND EXISTS (
+                 SELECT 1 FROM clientes c
+                 WHERE c.usuario_id = solicitudes.cliente_id
+                   AND NULLIF(TRIM(c.nombre), '') IS NOT NULL
+                   AND NULLIF(TRIM(c.telefono), '') IS NOT NULL
+                   AND NULLIF(TRIM(c.direccion), '') IS NOT NULL
+               )
              RETURNING *`,
             [realId, id]
         );
-        if (result.rows.length === 0) return res.status(409).json({ error: "La solicitud ya fue procesada" });
+        if (result.rows.length === 0) {
+            const solicitudRes = await pool.query("SELECT cliente_id FROM solicitudes WHERE id = $1::int", [id]);
+            if (solicitudRes.rows.length > 0) {
+                const clientProfileOk = await ensureClientProfileComplete(solicitudRes.rows[0].cliente_id, res);
+                if (!clientProfileOk) return;
+            }
+            return res.status(409).json({ error: "La solicitud ya fue procesada" });
+        }
         res.json(result.rows[0]);
     } catch (error) {
         console.error("Error actualizando solicitud a progreso:", error);
@@ -713,9 +786,24 @@ app.put("/api/solicitudes/cliente/:clienteId/aceptar", async (req, res) => {
         const realId = await resolveProfesionalProfileId(profesional_id) || profesional_id;
 
         const result = await pool.query(
-            `UPDATE solicitudes SET estado = 'EN_PROGRESO', profesional_id = $1 WHERE cliente_id = $2::uuid AND (LOWER(estado) = 'pendiente' OR LOWER(estado) = 'por_confirmar') RETURNING *`,
+            `UPDATE solicitudes
+             SET estado = 'EN_PROGRESO', profesional_id = $1
+             WHERE cliente_id = $2::uuid
+               AND (LOWER(estado) = 'pendiente' OR LOWER(estado) = 'por_confirmar')
+               AND EXISTS (
+                 SELECT 1 FROM clientes c
+                 WHERE c.usuario_id = solicitudes.cliente_id
+                   AND NULLIF(TRIM(c.nombre), '') IS NOT NULL
+                   AND NULLIF(TRIM(c.telefono), '') IS NOT NULL
+                   AND NULLIF(TRIM(c.direccion), '') IS NOT NULL
+               )
+             RETURNING *`,
             [realId, clienteId]
         );
+        if (result.rowCount === 0) {
+            const clientProfileOk = await ensureClientProfileComplete(clienteId, res);
+            if (!clientProfileOk) return;
+        }
         res.json({ success: true, actualizadas: result.rowCount });
     } catch (error) {
         console.error("Error aceptando solicitudes del cliente:", error);

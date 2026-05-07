@@ -1,0 +1,16 @@
+
+❌ No se pudo iniciar porque hay puertos ocupados:
+
+   - AUTH: puerto 3000
+   - PAGOS: puerto 3002
+   - NOTIF: puerto 3005
+   - GATEWAY: puerto 4000
+
+Cierra la terminal anterior del backend o libera esos puertos con PowerShell:
+   Stop-Process -Id (Get-NetTCPConnection -LocalPort 3000).OwningProcess -Force
+   Stop-Process -Id (Get-NetTCPConnection -LocalPort 3002).OwningProcess -Force
+   Stop-Process -Id (Get-NetTCPConnection -LocalPort 3005).OwningProcess -Force
+   Stop-Process -Id (Get-NetTCPConnection -LocalPort 4000).OwningProcess -Force
+
+Luego ejecuta otra vez: npm run dev
+

@@ -65,6 +65,22 @@ const generarToken = (user) => {
     );
 };
 
+const registrarSesion = async (req, userId) => {
+    try {
+        await pool.query(
+            `INSERT INTO sesiones (usuario_id, dispositivo, ip_address)
+             VALUES ($1, $2, $3)`,
+            [
+                userId,
+                req.headers["user-agent"] || "Navegador Web",
+                req.ip || req.socket?.remoteAddress || null
+            ]
+        );
+    } catch (error) {
+        console.error("Error registrando sesión:", error.message);
+    }
+};
+
 // --- REGISTRAR USUARIO ---
 app.post("/api/register", async (req, res) => {
     const { nombre, email, password, rol } = req.body;
@@ -102,6 +118,7 @@ app.post("/api/login", async (req, res) => {
         if (!valid) return res.status(401).json({ message: "Credenciales inválidas" });
 
         const token = generarToken(user);
+        await registrarSesion(req, user.id);
 
         // Notificar via Socket (Opcional)
         io.to(user.id).emit("login_success", { message: "Has iniciado sesión" });
@@ -144,6 +161,7 @@ app.post("/api/google", async (req, res) => {
         }
 
         const token = generarToken(user);
+        await registrarSesion(req, user.id);
         res.json({
             token,
             user: { id: user.id, nombre: user.nombre, email: user.email, rol: user.rol }
@@ -161,6 +179,36 @@ app.get("/api/users/me", verificarToken, async (req, res) => {
         if (result.rows.length === 0) return res.status(404).json({ message: "Usuario no encontrado" });
         res.json(result.rows[0]);
     } catch (error) { res.status(500).json({ message: "Error obteniendo datos" }); }
+});
+
+// --- SESIONES DEL USUARIO ---
+app.get("/api/users/sessions", verificarToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT id, dispositivo, ip_address, last_active, created_at
+             FROM sesiones
+             WHERE usuario_id = $1
+             ORDER BY created_at DESC`,
+            [req.user.id]
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error("Error obteniendo sesiones:", error);
+        res.status(500).json({ message: "Error obteniendo sesiones" });
+    }
+});
+
+app.delete("/api/users/sessions/:id", verificarToken, async (req, res) => {
+    try {
+        await pool.query(
+            "DELETE FROM sesiones WHERE id = $1 AND usuario_id = $2",
+            [req.params.id, req.user.id]
+        );
+        res.json({ success: true });
+    } catch (error) {
+        console.error("Error cerrando sesión:", error);
+        res.status(500).json({ message: "Error cerrando sesión" });
+    }
 });
 
 app.get("/", (req, res) => {

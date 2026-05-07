@@ -67,6 +67,35 @@ const parseMoney = (value) => {
     return numbers.length > 0 ? Math.max(...numbers) : null;
 };
 
+const CLIENT_PROFILE_INCOMPLETE_MESSAGE = "Debes completar tu perfil antes de hacer una solicitud.";
+const PERFILES_SERVICE_URL = process.env.PERFILES_SERVICE_URL || "http://localhost:3010";
+
+const isClientProfileComplete = (cliente) => {
+    if (!cliente) return false;
+    return Boolean(
+        String(cliente.nombre || "").trim() &&
+        String(cliente.telefono || "").trim() &&
+        String(cliente.direccion || "").trim()
+    );
+};
+
+const ensureClientProfileComplete = async (clienteId, res) => {
+    try {
+        const response = await fetch(`${PERFILES_SERVICE_URL}/api/clientes/${clienteId}`);
+        const cliente = response.ok ? await response.json() : null;
+        if (isClientProfileComplete(cliente)) return true;
+    } catch (error) {
+        console.error("No se pudo validar el perfil del cliente:", error.message);
+        return res.status(503).json({ error: "No se pudo validar el perfil del cliente. Intenta más tarde." });
+    }
+
+    res.status(403).json({
+        error: CLIENT_PROFILE_INCOMPLETE_MESSAGE,
+        code: "CLIENT_PROFILE_INCOMPLETE"
+    });
+    return false;
+};
+
 // RUTA RAIZ DE PRUEBA
 app.get('/', (req, res) => {
     res.json({ message: "Servicio de Trabajos (Trabajos-Perfil) está corriendo correctamente." });
@@ -83,6 +112,9 @@ app.post('/api/trabajos', async (req, res) => {
     }
 
     try {
+        const clientProfileOk = await ensureClientProfileComplete(cliente_id, res);
+        if (!clientProfileOk) return;
+
         if (solicitud_id) {
             const existingJob = await pool.query(
                 `SELECT * FROM trabajos
@@ -107,7 +139,7 @@ app.post('/api/trabajos', async (req, res) => {
 
         if (solicitud_id) {
             try {
-                const solicitudRes = await fetch(`http://localhost:3001/api/solicitudes/${solicitud_id}`);
+                const solicitudRes = await fetch(`${PERFILES_SERVICE_URL}/api/solicitudes/${solicitud_id}`);
                 if (solicitudRes.ok) {
                     const solicitud = await solicitudRes.json();
                     metodoPago = normalizePaymentMethod(req.body.metodo_pago || solicitud.metodo_pago);
@@ -142,7 +174,7 @@ app.post('/api/trabajos', async (req, res) => {
         // Update the solicitud in perfiles-service so it disappears from the professional's feed
         if (solicitud_id) {
             try {
-                await fetch(`http://localhost:3001/api/solicitudes/${solicitud_id}/progreso`, {
+                await fetch(`${PERFILES_SERVICE_URL}/api/solicitudes/${solicitud_id}/progreso`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ profesional_id })
@@ -153,7 +185,7 @@ app.post('/api/trabajos', async (req, res) => {
         } else {
             // Si no hay solicitud_id, cerramos cualquier solicitud pendiente del cliente
             try {
-                await fetch(`http://localhost:3001/api/solicitudes/cliente/${cliente_id}/aceptar`, {
+                await fetch(`${PERFILES_SERVICE_URL}/api/solicitudes/cliente/${cliente_id}/aceptar`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ profesional_id })
@@ -502,7 +534,7 @@ app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
 
         if (cotizacion.solicitud_id) {
             try {
-                await fetch(`http://localhost:3001/api/solicitudes/${cotizacion.solicitud_id}/progreso`, {
+                await fetch(`${PERFILES_SERVICE_URL}/api/solicitudes/${cotizacion.solicitud_id}/progreso`, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ profesional_id: cotizacion.profesional_id })
@@ -588,7 +620,7 @@ app.post('/api/trabajos/:id/confirmar', async (req, res) => {
         // EFECTO DOMINÓ: CERRAR SOLICITUD EN PERFILES-SERVICE
         try {
             if (trabajo.solicitud_id) {
-                await fetch(`http://localhost:3001/api/solicitudes/${trabajo.solicitud_id}/finalizar`, {
+                await fetch(`${PERFILES_SERVICE_URL}/api/solicitudes/${trabajo.solicitud_id}/finalizar`, {
                     method: 'PUT'
                 });
                 console.log(`Solicitud ${trabajo.solicitud_id} finalizada en perfiles-service`);
@@ -785,7 +817,7 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
 
             if (trabajo.solicitud_id) {
                 try {
-                    await fetch(`http://localhost:3001/api/solicitudes/${trabajo.solicitud_id}/finalizar`, { method: 'PUT' });
+                    await fetch(`${PERFILES_SERVICE_URL}/api/solicitudes/${trabajo.solicitud_id}/finalizar`, { method: 'PUT' });
                 } catch (err) {
                     console.error('Error cerrando solicitud en perfiles-service:', err.message);
                 }
@@ -807,7 +839,7 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
         // 3. OBTENER DATOS FINANCIEROS (Microservicio Perfiles)
         let perfilData;
         try {
-            const response = await fetch(`http://localhost:3001/api/profesionales/${trabajo.profesional_id}/financiero`);
+            const response = await fetch(`${PERFILES_SERVICE_URL}/api/profesionales/${trabajo.profesional_id}/financiero`);
             if (!response.ok) throw new Error('ERROR_RED_PERFILES');
             perfilData = await response.json();
         } catch (error) {
@@ -838,7 +870,7 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
             // Si el intento de cobro a la tarjeta falla
             if (!cobroExitoso) {
                 try {
-                    await fetch(`http://localhost:3001/api/profesionales/${trabajo.profesional_id}/bloquear`, { method: 'PUT' });
+                    await fetch(`${PERFILES_SERVICE_URL}/api/profesionales/${trabajo.profesional_id}/bloquear`, { method: 'PUT' });
                 } catch (err) {
                     console.error('Alerta crítica: No se pudo comunicar el bloqueo a perfiles_db');
                 }
@@ -1120,7 +1152,7 @@ app.get('/api/trabajos/:id/recibo', async (req, res) => {
         
         // Intentar obtener más datos del profesional desde perfile-service si es posible
         try {
-            const profRes = await fetch(`http://localhost:3001/api/profesionales/${recibo.profesional_id}`);
+            const profRes = await fetch(`${PERFILES_SERVICE_URL}/api/profesionales/${recibo.profesional_id}`);
             if (profRes.ok) {
                 const profData = await profRes.json();
                 recibo.profesional_nombre = profData?.nombre || 'Profesional';
@@ -1221,7 +1253,7 @@ app.post('/api/trabajos/:id/confirmar-transferencia', async (req, res) => {
         // Cerrar solicitud en perfiles-service
         if (trabajo.solicitud_id) {
             try {
-                await fetch(`http://localhost:3001/api/solicitudes/${trabajo.solicitud_id}/finalizar`, { method: 'PUT' });
+                await fetch(`${PERFILES_SERVICE_URL}/api/solicitudes/${trabajo.solicitud_id}/finalizar`, { method: 'PUT' });
             } catch (err) {
                 console.error('Error cerrando solicitud en perfiles-service:', err.message);
             }
