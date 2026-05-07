@@ -63,6 +63,10 @@ export const initDB = async () => {
     // Ensure trabajo_id column exists (safe migration for existing tables)
     await pool.query(`ALTER TABLE cotizaciones ADD COLUMN IF NOT EXISTS trabajo_id INTEGER`).catch(() => {});
 
+    // Safe migration: comprobante fields for transfer payment confirmation flow
+    await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_url TEXT`).catch(() => {});
+    await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_estado VARCHAR(50) DEFAULT 'NINGUNO'`).catch(() => {});
+
     // 3. Acciones Trabajo
     await pool.query(`
       CREATE TABLE IF NOT EXISTS acciones_trabajo (

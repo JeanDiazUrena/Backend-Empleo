@@ -206,7 +206,11 @@ app.post("/api/google", async (req, res) => {
 
     } catch (error) {
         console.error("Google Auth Error:", error);
-        res.status(500).json({ message: "Error con Google Auth" });
+        res.status(500).json({ 
+            success: false, 
+            message: "Error con Google Auth", 
+            error: error.message 
+        });
     }
 });
 
