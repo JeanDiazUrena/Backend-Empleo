@@ -156,7 +156,7 @@ app.get("/api/profesionales/:usuarioId", async (req, res) => {
 app.get("/api/profesionales/:usuarioId/financiero", async (req, res) => {
     try {
         const { usuarioId } = req.params;
-        const result = await pool.query("SELECT stripe_card_token, cuenta_bancaria, banco, estado_financiero FROM perfiles.profesionales WHERE usuario_id = $1", [usuarioId]);
+        const result = await pool.query("SELECT nombre, stripe_card_token, cuenta_bancaria, banco, estado_financiero FROM perfiles.profesionales WHERE usuario_id = $1", [usuarioId]);
         if (result.rows.length === 0) return res.status(404).json({ error: "No encontrado" });
         res.json(result.rows[0]);
     } catch (error) { res.status(500).json({ error: "Error servidor" }); }
@@ -474,7 +474,15 @@ app.get("/api/solicitudes/recibo/:id", async (req, res) => {
 app.get("/api/solicitudes/cliente/:clienteId", async (req, res) => {
     try {
         const { clienteId } = req.params;
-        const result = await pool.query("SELECT * FROM solicitudes WHERE cliente_id = $1 AND estado != 'FINALIZADA' ORDER BY fecha_creacion DESC", [clienteId]);
+        const result = await pool.query(
+            `SELECT s.*, p.nombre as profesional_nombre, p.avatar_url as profesional_avatar, p.usuario_id as profesional_usuario_id
+             FROM solicitudes s
+             LEFT JOIN perfiles.profesionales p ON s.profesional_id = p.id
+             WHERE s.cliente_id = $1::uuid 
+             AND (LOWER(s.estado) = 'pendiente' OR LOWER(s.estado) = 'por_confirmar') 
+             ORDER BY s.fecha_creacion DESC`,
+            [clienteId]
+        );
         res.json(result.rows);
     } catch (error) {
         console.error("Error obteniendo solicitudes del cliente:", error);
@@ -501,14 +509,19 @@ app.get("/api/solicitudes", async (req, res) => {
       SELECT s.*, c.nombre as cliente_nombre, c.avatar as cliente_avatar, c.direccion as cliente_direccion
       FROM solicitudes s
       LEFT JOIN clientes c ON s.cliente_id::text = c.usuario_id::text
-      WHERE s.estado = 'pendiente'
+      WHERE (LOWER(s.estado) = 'pendiente' OR (LOWER(s.estado) = 'por_confirmar' AND s.profesional_id::text = $1))
     `;
         const params = [];
         if (profesional_id) {
-            query += ` AND (s.profesional_id IS NULL OR s.profesional_id::text = $1) `;
             params.push(profesional_id);
         } else {
-            query += ` AND s.profesional_id IS NULL `;
+            // Si no hay id, solo pendientes generales
+            query = `
+              SELECT s.*, c.nombre as cliente_nombre, c.avatar as cliente_avatar, c.direccion as cliente_direccion
+              FROM solicitudes s
+              LEFT JOIN clientes c ON s.cliente_id::text = c.usuario_id::text
+              WHERE LOWER(s.estado) = 'pendiente' AND s.profesional_id IS NULL
+            `;
         }
         query += ` ORDER BY s.fecha_creacion DESC`;
 
@@ -517,6 +530,68 @@ app.get("/api/solicitudes", async (req, res) => {
     } catch (error) {
         console.error("Error obteniendo todas las solicitudes:", error);
         res.status(500).json({ error: "Error obteniendo solicitudes" });
+    }
+});
+
+// ACTUALIZAR SOLICITUD (Cliente)
+app.put("/api/solicitudes/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { titulo, descripcion, categoria, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, metodo_pago } = req.body;
+        const result = await pool.query(
+            `UPDATE solicitudes SET 
+                titulo = $1, descripcion = $2, categoria = $3, urgencia = $4, 
+                ubicacion = $5, disponibilidad = $6, presupuesto_min = $7, 
+                presupuesto_max = $8, metodo_pago = $9 
+             WHERE id = $10 RETURNING *`,
+            [titulo, descripcion, categoria, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, metodo_pago, id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: "No encontrada" });
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error("Error al actualizar solicitud:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// CANCELAR SOLICITUD (Cliente)
+app.delete("/api/solicitudes/:id", async (req, res) => {
+    try {
+        const { id } = req.params;
+        await pool.query("DELETE FROM solicitudes WHERE id = $1::int", [id]);
+        res.json({ success: true, message: "Solicitud cancelada" });
+    } catch (error) {
+        console.error("Error al cancelar solicitud:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// POSTULARSE A SOLICITUD (Profesional - Queda a espera de confirmación del cliente)
+app.put("/api/solicitudes/:id/postular", async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { profesional_id } = req.body; // Este es el usuario_id del profesional
+        
+        if (!profesional_id) {
+            return res.status(400).json({ error: "ID de profesional no proporcionado" });
+        }
+
+        // Buscamos el ID real del perfil profesional (UUID de la tabla profesionales)
+        const profRes = await pool.query("SELECT id FROM perfiles.profesionales WHERE usuario_id = $1", [profesional_id]);
+        if (profRes.rows.length === 0) {
+            return res.status(404).json({ error: "No se encontró un perfil profesional para este usuario" });
+        }
+        const realProfesionalId = profRes.rows[0].id;
+
+        const result = await pool.query(
+            `UPDATE solicitudes SET estado = 'POR_CONFIRMAR', profesional_id = $1 WHERE id = $2::int RETURNING *`,
+            [realProfesionalId, id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ error: "Solicitud no encontrada" });
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error("Error al postularse a solicitud:", error);
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -538,31 +613,47 @@ app.put("/api/solicitudes/:id/finalizar", async (req, res) => {
 app.put("/api/solicitudes/:id/progreso", async (req, res) => {
     try {
         const { id } = req.params;
-        const { profesional_id } = req.body;
+        const { profesional_id } = req.body; // Este es el usuario_id del profesional
+        
+        // Buscamos el ID real del perfil profesional
+        const profRes = await pool.query("SELECT id FROM perfiles.profesionales WHERE usuario_id = $1", [profesional_id]);
+        let realId = profesional_id;
+        if (profRes.rows.length > 0) {
+            realId = profRes.rows[0].id;
+        }
+
         const result = await pool.query(
-            `UPDATE solicitudes SET estado = 'en_progreso', profesional_id = $1 WHERE id = $2 RETURNING *`,
-            [profesional_id, id]
+            `UPDATE solicitudes SET estado = 'EN_PROGRESO', profesional_id = $1 WHERE id = $2::int RETURNING *`,
+            [realId, id]
         );
         if (result.rows.length === 0) return res.status(404).json({ error: "Solicitud no encontrada" });
         res.json(result.rows[0]);
     } catch (error) {
         console.error("Error actualizando solicitud a progreso:", error);
-        res.status(500).json({ error: "Error servidor" });
+        res.status(500).json({ error: error.message });
     }
 });
 
 app.put("/api/solicitudes/cliente/:clienteId/aceptar", async (req, res) => {
     try {
         const { clienteId } = req.params;
-        const { profesional_id } = req.body;
+        const { profesional_id } = req.body; // Este es el usuario_id del profesional
+        
+        // Buscamos el ID real del perfil profesional
+        const profRes = await pool.query("SELECT id FROM perfiles.profesionales WHERE usuario_id = $1", [profesional_id]);
+        let realId = profesional_id;
+        if (profRes.rows.length > 0) {
+            realId = profRes.rows[0].id;
+        }
+
         const result = await pool.query(
-            `UPDATE solicitudes SET estado = 'en_progreso', profesional_id = $1 WHERE cliente_id = $2 AND estado = 'pendiente' RETURNING *`,
-            [profesional_id, clienteId]
+            `UPDATE solicitudes SET estado = 'EN_PROGRESO', profesional_id = $1 WHERE cliente_id = $2::uuid AND (LOWER(estado) = 'pendiente' OR LOWER(estado) = 'por_confirmar') RETURNING *`,
+            [realId, clienteId]
         );
         res.json({ success: true, actualizadas: result.rowCount });
     } catch (error) {
         console.error("Error aceptando solicitudes del cliente:", error);
-        res.status(500).json({ error: "Error servidor" });
+        res.status(500).json({ error: error.message });
     }
 });
 

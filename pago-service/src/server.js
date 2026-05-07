@@ -134,42 +134,66 @@ app.post("/api/settings/email/verify", async (req, res) => {
 });
 
 // -------- MÉTODOS DE PAGO --------
-app.get("/api/settings/payments", async (req, res) => {
-    res.json({
-        success: true,
-        data: [
-            { id: 1, brand: "visa", last4: "4321", exp: "12/26" },
-            { id: 2, brand: "mastercard", last4: "8899", exp: "08/25" },
-        ],
-    });
+app.get("/api/settings/payments/:usuarioId", async (req, res) => {
+    try {
+        const { usuarioId } = req.params;
+        const result = await pool.query(
+            "SELECT * FROM metodos_pago WHERE usuario_id = $1 ORDER BY created_at DESC",
+            [usuarioId]
+        );
+        res.json({
+            success: true,
+            data: result.rows,
+        });
+    } catch (error) {
+        console.error("❌ Error obteniendo métodos de pago:", error.message);
+        res.status(500).json({ success: false, message: "Error al obtener métodos de pago" });
+    }
 });
 
 app.post("/api/settings/payments", async (req, res) => {
-    const { number, exp } = req.body;
+    try {
+        console.log("📥 Recibiendo solicitud de pago:", req.body);
+        const { usuario_id, card_number, holder_name, exp, cvv, brand } = req.body;
 
-    if (!number || !exp) {
-        return res.status(400).json({
-            success: false,
-            message: "Datos incompletos",
+        if (!usuario_id || !card_number || !exp || !holder_name) {
+            return res.status(400).json({
+                success: false,
+                message: "Datos incompletos",
+            });
+        }
+
+        const calculatedBrand = brand || (card_number.startsWith("4") ? "visa" : "mastercard");
+        const last4 = card_number.slice(-4);
+
+        const result = await pool.query(
+            "INSERT INTO metodos_pago (usuario_id, brand, holder_name, card_number, last4, exp, cvv, token) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
+            [usuario_id, calculatedBrand, holder_name, card_number, last4, exp, cvv, 'tok_mock_' + Date.now()]
+        );
+
+        res.json({
+            success: true,
+            data: result.rows[0],
+        });
+    } catch (error) {
+        console.error("❌ ERROR DETALLADO guardando método de pago:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: "Error al guardar método de pago",
+            error: error.message 
         });
     }
-
-    const brand = number.startsWith("4") ? "visa" : "mastercard";
-    const last4 = number.slice(-4);
-
-    res.json({
-        success: true,
-        data: {
-            id: Date.now(),
-            brand,
-            last4,
-            exp,
-        },
-    });
 });
 
 app.delete("/api/settings/payments/:id", async (req, res) => {
-    res.json({ success: true });
+    try {
+        const { id } = req.params;
+        await pool.query("DELETE FROM metodos_pago WHERE id = $1", [id]);
+        res.json({ success: true });
+    } catch (error) {
+        console.error("❌ Error eliminando método de pago:", error.message);
+        res.status(500).json({ success: false, message: "Error al eliminar" });
+    }
 });
 
 // -------- 2FA --------

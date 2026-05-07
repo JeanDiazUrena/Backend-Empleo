@@ -156,6 +156,9 @@ export const initDB = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    
+    // Asegurar que profesional_id existe (migración)
+    await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS profesional_id UUID`);
 
     console.log("✅ Esquema y todas las tablas de 'perfile-service' verificados.");
   } catch (err) {
