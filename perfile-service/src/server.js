@@ -132,7 +132,7 @@ app.get("/api/profesionales", async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error("Error obteniendo profesionales:", error);
-        res.status(500).json({ error: "Error servidor" });
+        res.status(500).json({ error: "Error servidor: " + error.message });
     }
 });
 
@@ -147,7 +147,10 @@ app.get("/api/profesionales/:usuarioId", async (req, res) => {
         const perfil = result.rows[0];
         const portfolio = await pool.query("SELECT * FROM trabajos_portafolio WHERE profesional_id = $1 ORDER BY id DESC", [perfil.id]);
         res.json({ ...perfil, location: `${perfil.ciudad}, ${perfil.sector}`, portfolio: portfolio.rows });
-    } catch (error) { res.status(500).json({ error: "Error servidor" }); }
+    } catch (error) { 
+        console.error("Error obteniendo perfil completo:", error);
+        res.status(500).json({ error: "Error servidor: " + error.message }); 
+    }
 });
 
 // ==========================================
@@ -159,7 +162,10 @@ app.get("/api/profesionales/:usuarioId/financiero", async (req, res) => {
         const result = await pool.query("SELECT nombre, stripe_card_token, cuenta_bancaria, banco, estado_financiero FROM perfiles.profesionales WHERE usuario_id = $1", [usuarioId]);
         if (result.rows.length === 0) return res.status(404).json({ error: "No encontrado" });
         res.json(result.rows[0]);
-    } catch (error) { res.status(500).json({ error: "Error servidor" }); }
+    } catch (error) { 
+        console.error("Error obteniendo datos financieros:", error);
+        res.status(500).json({ error: "Error servidor: " + error.message }); 
+    }
 });
 
 app.put("/api/profesionales/:usuarioId/bloquear", async (req, res) => {
@@ -167,7 +173,10 @@ app.put("/api/profesionales/:usuarioId/bloquear", async (req, res) => {
         const { usuarioId } = req.params;
         await pool.query("UPDATE perfiles.profesionales SET estado_financiero = 'bloqueado_por_deuda' WHERE usuario_id = $1", [usuarioId]);
         res.json({ message: "Usuario bloqueado" });
-    } catch (error) { res.status(500).json({ error: "Error servidor" }); }
+    } catch (error) { 
+        console.error("Error bloqueando profesional:", error);
+        res.status(500).json({ error: "Error servidor: " + error.message }); 
+    }
 });
 
 app.put("/api/profesionales/:usuarioId/financiero", async (req, res) => {
@@ -486,7 +495,7 @@ app.get("/api/solicitudes/cliente/:clienteId", async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error("Error obteniendo solicitudes del cliente:", error);
-        res.status(500).json({ error: "Error obteniendo solicitudes" });
+        res.status(500).json({ error: "Error obteniendo solicitudes: " + error.message });
     }
 });
 
@@ -529,7 +538,7 @@ app.get("/api/solicitudes", async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error("Error obteniendo todas las solicitudes:", error);
-        res.status(500).json({ error: "Error obteniendo solicitudes" });
+        res.status(500).json({ error: "Error obteniendo solicitudes: " + error.message });
     }
 });
 
