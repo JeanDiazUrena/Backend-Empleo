@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
 import { pool, testDB } from "./db.js";
 
 dotenv.config();
@@ -9,6 +10,18 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+
+// 🔐 Middleware para verificar JWT
+const verificarToken = (req, res, next) => {
+    const token = req.headers["authorization"]?.split(" ")[1];
+    if (!token) return res.status(403).json({ message: "Token requerido" });
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) return res.status(401).json({ message: "Token inválido o expirado" });
+        req.user = decoded;
+        next();
+    });
+};
 
 // Logger simple
 app.use((req, res, next) => {
@@ -134,11 +147,17 @@ app.post("/api/settings/email/verify", async (req, res) => {
 });
 
 // -------- MÉTODOS DE PAGO --------
-app.get("/api/settings/payments/:usuarioId", async (req, res) => {
+app.get("/api/settings/payments/:usuarioId", verificarToken, async (req, res) => {
     try {
         const { usuarioId } = req.params;
+        
+        // Solo el dueño o admin puede ver métodos de pago
+        if (req.user.id !== usuarioId && req.user.rol !== 'admin') {
+            return res.status(403).json({ success: false, message: "No autorizado" });
+        }
+
         const result = await pool.query(
-            "SELECT * FROM metodos_pago WHERE usuario_id = $1 ORDER BY created_at DESC",
+            "SELECT id, brand, last4, exp, proveedor, is_default, holder_name FROM metodos_pago WHERE usuario_id = $1 ORDER BY created_at DESC",
             [usuarioId]
         );
         res.json({
@@ -151,24 +170,25 @@ app.get("/api/settings/payments/:usuarioId", async (req, res) => {
     }
 });
 
-app.post("/api/settings/payments", async (req, res) => {
+app.post("/api/settings/payments", verificarToken, async (req, res) => {
     try {
-        console.log("📥 Recibiendo solicitud de pago:", req.body);
-        const { usuario_id, card_number, holder_name, exp, cvv, brand } = req.body;
+        console.log("📥 Recibiendo solicitud de pago segura");
+        const { usuario_id, token, brand, last4, exp, holder_name, proveedor } = req.body;
 
-        if (!usuario_id || !card_number || !exp || !holder_name) {
+        if (!usuario_id || !token || !last4 || !exp) {
             return res.status(400).json({
                 success: false,
-                message: "Datos incompletos",
+                message: "Datos incompletos (token, last4, exp son requeridos)",
             });
         }
 
-        const calculatedBrand = brand || (card_number.startsWith("4") ? "visa" : "mastercard");
-        const last4 = card_number.slice(-4);
+        if (req.user.id !== usuario_id && req.user.rol !== 'admin') {
+            return res.status(403).json({ success: false, message: "No autorizado" });
+        }
 
         const result = await pool.query(
-            "INSERT INTO metodos_pago (usuario_id, brand, holder_name, card_number, last4, exp, cvv, token) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *",
-            [usuario_id, calculatedBrand, holder_name, card_number, last4, exp, cvv, 'tok_mock_' + Date.now()]
+            "INSERT INTO metodos_pago (usuario_id, brand, holder_name, last4, exp, token, proveedor) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, brand, last4, exp, proveedor",
+            [usuario_id, brand, holder_name, last4, exp, token, proveedor || 'stripe']
         );
 
         res.json({
@@ -176,18 +196,26 @@ app.post("/api/settings/payments", async (req, res) => {
             data: result.rows[0],
         });
     } catch (error) {
-        console.error("❌ ERROR DETALLADO guardando método de pago:", error);
+        console.error("❌ ERROR guardando método de pago:", error.message);
         res.status(500).json({ 
             success: false, 
-            message: "Error al guardar método de pago",
-            error: error.message 
+            message: "Error al guardar método de pago"
         });
     }
 });
 
-app.delete("/api/settings/payments/:id", async (req, res) => {
+app.delete("/api/settings/payments/:id", verificarToken, async (req, res) => {
     try {
         const { id } = req.params;
+        
+        // Primero verificar propiedad (o simplificar si confiamos en el query con usuario_id)
+        const check = await pool.query("SELECT usuario_id FROM metodos_pago WHERE id = $1", [id]);
+        if (check.rows.length > 0) {
+            if (check.rows[0].usuario_id !== req.user.id && req.user.rol !== 'admin') {
+                return res.status(403).json({ success: false, message: "No autorizado" });
+            }
+        }
+
         await pool.query("DELETE FROM metodos_pago WHERE id = $1", [id]);
         res.json({ success: true });
     } catch (error) {

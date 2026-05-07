@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
 import { testDB, pool } from "./db.js";
 
 dotenv.config();
@@ -8,6 +9,20 @@ dotenv.config();
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// 🔐 Middleware para verificar JWT
+const verificarToken = (req, res, next) => {
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+    
+    if (!token) return res.status(403).json({ message: "Token requerido" });
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) return res.status(401).json({ message: "Token inválido o expirado" });
+        req.user = decoded;
+        next();
+    });
+};
 
 // Logger simple para depuración
 app.use((req, res, next) => {
@@ -17,7 +32,7 @@ app.use((req, res, next) => {
 });
 
 // Obtener todas las notificaciones de un usuario
-app.get("/notificaciones/:user_id", async (req, res) => {
+app.get("/notificaciones/:user_id", verificarToken, async (req, res) => {
     try {
         const { user_id } = req.params;
         const result = await pool.query(
@@ -32,7 +47,7 @@ app.get("/notificaciones/:user_id", async (req, res) => {
 });
 
 // Marcar notificación como leída
-app.put("/notificaciones/:id/read", async (req, res) => {
+app.put("/notificaciones/:id/read", verificarToken, async (req, res) => {
     try {
         const { id } = req.params;
         await pool.query("UPDATE notificaciones SET is_read = TRUE WHERE id = $1", [id]);
@@ -44,7 +59,7 @@ app.put("/notificaciones/:id/read", async (req, res) => {
 });
 
 // Obtener la cantidad de notificaciones no leídas
-app.get("/notificaciones/:user_id/unread-count", async (req, res) => {
+app.get("/notificaciones/:user_id/unread-count", verificarToken, async (req, res) => {
     try {
         const { user_id } = req.params;
         const result = await pool.query(

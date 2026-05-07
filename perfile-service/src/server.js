@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
 
 dotenv.config();
 
@@ -20,6 +21,20 @@ const PORT = process.env.PORT || 3001;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// 🔐 Middleware para verificar JWT
+const verificarToken = (req, res, next) => {
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+    
+    if (!token) return res.status(403).json({ message: "Token requerido" });
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) return res.status(401).json({ message: "Token inválido o expirado" });
+        req.user = decoded;
+        next();
+    });
+};
 
 // 1. CONFIGURACIÓN BÁSICA
 app.use(cors({ origin: "http://localhost:5173" }));
@@ -44,7 +59,7 @@ const upload = multer({ storage: storage, limits: { fileSize: 50 * 1024 * 1024 }
 // ==========================================
 // RUTA 1: GUARDAR O ACTUALIZAR PERFIL (PROFESIONALES)
 // ==========================================
-app.post("/api/perfiles", upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'cover', maxCount: 1 }]), async (req, res) => {
+app.post("/api/perfiles", verificarToken, upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'cover', maxCount: 1 }]), async (req, res) => {
     try {
         const { usuario_id, nombre, profesion, biografia, categoria, anios_experiencia, sitio_web, telefono, email_publico, ciudad, sector, horario, habilidades } = req.body;
         const checkUser = await pool.query("SELECT id FROM perfiles.profesionales WHERE usuario_id = $1", [usuario_id]);
@@ -153,7 +168,7 @@ app.get("/api/profesionales/:usuarioId", async (req, res) => {
 // ==========================================
 // RUTAS FINANCIERAS (PARA TRABAJOS-SERVICE)
 // ==========================================
-app.get("/api/profesionales/:usuarioId/financiero", async (req, res) => {
+app.get("/api/profesionales/:usuarioId/financiero", verificarToken, async (req, res) => {
     try {
         const { usuarioId } = req.params;
         const result = await pool.query("SELECT nombre, stripe_card_token, cuenta_bancaria, banco, estado_financiero FROM perfiles.profesionales WHERE usuario_id = $1", [usuarioId]);
@@ -170,7 +185,7 @@ app.put("/api/profesionales/:usuarioId/bloquear", async (req, res) => {
     } catch (error) { res.status(500).json({ error: "Error servidor" }); }
 });
 
-app.put("/api/profesionales/:usuarioId/financiero", async (req, res) => {
+app.put("/api/profesionales/:usuarioId/financiero", verificarToken, async (req, res) => {
     const { usuarioId } = req.params;
     const { stripe_card_token, cuenta_bancaria, banco } = req.body;
 
@@ -211,7 +226,7 @@ app.put("/api/profesionales/:usuarioId/financiero", async (req, res) => {
 // ==========================================
 // RUTAS DE PORTAFOLIO
 // ==========================================
-app.post("/api/portfolio", upload.single('imagen'), async (req, res) => {
+app.post("/api/portfolio", verificarToken, upload.single('imagen'), async (req, res) => {
     try {
         const { profesional_id, titulo, descripcion } = req.body;
         if (!req.file) return res.status(400).json({ message: "Falta imagen" });
@@ -267,7 +282,7 @@ app.get("/api/clientes/:usuarioId", async (req, res) => {
     }
 });
 
-app.post("/api/clientes", upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'banner', maxCount: 1 }]), async (req, res) => {
+app.post("/api/clientes", verificarToken, upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'banner', maxCount: 1 }]), async (req, res) => {
     try {
         const { usuario_id, phone, location, nombre, email } = req.body;
 
@@ -333,74 +348,9 @@ app.delete("/api/perfiles/usuario/:usuarioId", async (req, res) => {
 });
 
 // ==========================================
-// CREAR TABLAS DE CHAT (si no existen)
-// ==========================================
-const initChatTables = async () => {
-    try {
-        await pool.query(`
-      CREATE TABLE IF NOT EXISTS conversaciones (
-        id SERIAL PRIMARY KEY,
-        cliente_id UUID NOT NULL,
-        profesional_usuario_id UUID NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
-        UNIQUE(cliente_id, profesional_usuario_id)
-      )
-    `);
-        await pool.query(`
-      CREATE TABLE IF NOT EXISTS mensajes (
-        id SERIAL PRIMARY KEY,
-        conversacion_id INTEGER REFERENCES conversaciones(id) ON DELETE CASCADE,
-        remitente_id UUID NOT NULL,
-        contenido TEXT NOT NULL,
-        tipo VARCHAR(20) DEFAULT 'texto',
-        leido BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT NOW()
-      )
-    `);
-
-        // Migración para columna tipo si no existe
-        await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'texto'`);
-
-        // TABLA SOLICITUDES
-        await pool.query(`
-      CREATE TABLE IF NOT EXISTS solicitudes (
-        id SERIAL PRIMARY KEY,
-        cliente_id UUID NOT NULL,
-        titulo VARCHAR(255) NOT NULL,
-        categoria VARCHAR(255) NOT NULL,
-        descripcion TEXT NOT NULL,
-        urgencia VARCHAR(50),
-        ubicacion VARCHAR(255),
-        disponibilidad VARCHAR(100),
-        presupuesto_min DECIMAL(12,2),
-        presupuesto_max DECIMAL(12,2),
-        monto_acordado NUMERIC(12,2),
-        imagen_url TEXT,
-        profesional_id UUID,
-        estado VARCHAR(50) DEFAULT 'pendiente',
-        metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
-        estado_pago VARCHAR(50) DEFAULT 'PENDIENTE',
-        fecha_creacion TIMESTAMP DEFAULT NOW(),
-        CONSTRAINT fk_profesional FOREIGN KEY (profesional_id) REFERENCES perfiles.profesionales(id) ON DELETE SET NULL
-      )
-    `);
-        await pool.query(`
-      ALTER TABLE solicitudes
-      ADD COLUMN IF NOT EXISTS monto_acordado NUMERIC(12,2),
-      ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
-      ADD COLUMN IF NOT EXISTS estado_pago VARCHAR(50) DEFAULT 'PENDIENTE'
-    `);
-        console.log("Tablas de chat y solicitudes listas");
-    } catch (err) {
-        console.error("Error creando tablas chat/solicitudes:", err.message);
-    }
-};
-initChatTables();
-
-// ==========================================
 // RUTAS DE SOLICITUDES
 // ==========================================
-app.post("/api/solicitudes", upload.single('imagen'), async (req, res) => {
+app.post("/api/solicitudes", verificarToken, upload.single('imagen'), async (req, res) => {
     try {
         const { cliente_id, titulo, categoria, descripcion, profesional_id, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, monto_acordado, metodo_pago } = req.body;
         let imagenUrl = null;
@@ -555,7 +505,7 @@ app.put("/api/solicitudes/:id", async (req, res) => {
 });
 
 // CANCELAR SOLICITUD (Cliente)
-app.delete("/api/solicitudes/:id", async (req, res) => {
+app.delete("/api/solicitudes/:id", verificarToken, async (req, res) => {
     try {
         const { id } = req.params;
         await pool.query("DELETE FROM solicitudes WHERE id = $1::int", [id]);

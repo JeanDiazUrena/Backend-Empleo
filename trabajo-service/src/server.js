@@ -2,12 +2,27 @@ import express from 'express';
 import cors from 'cors';
 import pool, { testDB } from './db.js';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
 
 dotenv.config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// 🔐 Middleware para verificar JWT
+const verificarToken = (req, res, next) => {
+    const authHeader = req.headers["authorization"];
+    const token = authHeader && authHeader.split(" ")[1];
+    
+    if (!token) return res.status(403).json({ message: "Token requerido" });
+
+    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+        if (err) return res.status(401).json({ message: "Token inválido o expirado" });
+        req.user = decoded;
+        next();
+    });
+};
 
 const COMMISSION_RATE = 0.10;
 
@@ -40,7 +55,7 @@ app.get('/', (req, res) => {
 // SCHEMA UPDATE (Movido a db.js y scripts de inicio)// =========================================================================
 // RUTA: CREAR TRABAJO (CONTRATAR)
 // =========================================================================
-app.post('/api/trabajos', async (req, res) => {
+app.post('/api/trabajos', verificarToken, async (req, res) => {
     const { cliente_id, profesional_id, solicitud_id, titulo, descripcion, horario, presupuesto, cliente_nombre, categoria } = req.body;
 
     if (!cliente_id || !profesional_id) {
@@ -133,7 +148,7 @@ app.post('/api/trabajos', async (req, res) => {
 // =========================================================================
 // RUTA: OBTENER COTIZACIONES POR CLIENTE (PENDIENTES)
 // =========================================================================
-app.get('/api/cotizaciones/cliente/:clienteId', async (req, res) => {
+app.get('/api/cotizaciones/cliente/:clienteId', verificarToken, async (req, res) => {
     try {
         const { clienteId } = req.params;
         const result = await pool.query(
@@ -172,7 +187,7 @@ app.get('/api/cotizaciones/trabajo/:trabajoId', async (req, res) => {
 // =========================================================================
 // RUTA: OBTENER COTIZACIONES POR PROFESIONAL (PENDIENTES)
 // =========================================================================
-app.get('/api/cotizaciones/profesional/:profesionalId', async (req, res) => {
+app.get('/api/cotizaciones/profesional/:profesionalId', verificarToken, async (req, res) => {
     try {
         const { profesionalId } = req.params;
         const result = await pool.query(
@@ -191,7 +206,7 @@ app.get('/api/cotizaciones/profesional/:profesionalId', async (req, res) => {
 // =========================================================================
 // RUTA: CREAR COTIZACION DESDE DASHBOARD / CHAT
 // =========================================================================
-app.post('/api/cotizaciones', async (req, res) => {
+app.post('/api/cotizaciones', verificarToken, async (req, res) => {
     const {
         conversacion_id,
         solicitud_id,
@@ -254,7 +269,7 @@ app.post('/api/cotizaciones', async (req, res) => {
 // =========================================================================
 // RUTA: EDITAR COTIZACION ANTES DE QUE EL TRABAJO TERMINE
 // =========================================================================
-app.put('/api/cotizaciones/:id', async (req, res) => {
+app.put('/api/cotizaciones/:id', verificarToken, async (req, res) => {
     const cotizacionId = req.params.id;
     const { profesional_id, solicitud_id, titulo, descripcion, monto_total, metodo_pago } = req.body;
     const montoTotal = Number(monto_total);
@@ -349,7 +364,7 @@ app.put('/api/cotizaciones/:id', async (req, res) => {
 // =========================================================================
 // RUTA: CLIENTE ACEPTA COTIZACION Y SE CREA TRABAJO
 // =========================================================================
-app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
+app.put('/api/cotizaciones/:id/aceptar', verificarToken, async (req, res) => {
     const cotizacionId = req.params.id;
     const { cliente_id } = req.body;
     const client = await pool.connect();
@@ -477,7 +492,7 @@ app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
 // =========================================================================
 // RUTA: CONFIRMAR TRABAJO 
 // =========================================================================
-app.post('/api/trabajos/:id/confirmar', async (req, res) => {
+app.post('/api/trabajos/:id/confirmar', verificarToken, async (req, res) => {
     const trabajoId = req.params.id;
     const { cliente_id, comentario } = req.body;
 
@@ -571,7 +586,7 @@ app.post('/api/trabajos/:id/confirmar', async (req, res) => {
 // =========================================================================
 // RUTA: FINALIZAR TRABAJO Y COBRAR COMISIONES
 // =========================================================================
-app.post('/api/trabajos/:id/finalizar', async (req, res) => {
+app.post('/api/trabajos/:id/finalizar', verificarToken, async (req, res) => {
     const trabajo_id = req.params.id;
     const { monto_final } = req.body;
 
@@ -771,7 +786,7 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
 // =========================================================================
 // RUTA: PROFESIONAL MARCA COMO TERMINADO
 // =========================================================================
-app.put('/api/trabajos/:id/terminar', async (req, res) => {
+app.put('/api/trabajos/:id/terminar', verificarToken, async (req, res) => {
     const trabajoId = req.params.id;
     const { profesional_id } = req.body;
 
