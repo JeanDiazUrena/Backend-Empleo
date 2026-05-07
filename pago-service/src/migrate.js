@@ -1,22 +1,28 @@
 import pkg from "pg";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const { Pool } = pkg;
 
-export const pool = new Pool({
+const pool = new Pool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: String(process.env.DB_PASSWORD),
-
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
-const initDB = async () => {
+const migrate = async () => {
   try {
+    console.log("🚀 Iniciando migraciones de pago-service...");
+    
     await pool.query(`
       CREATE TABLE IF NOT EXISTS pagos (
         id SERIAL PRIMARY KEY,
@@ -38,23 +44,21 @@ const initDB = async () => {
         is_default BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
-    `).catch(() => {});
+    `);
 
-    await pool.query("ALTER TABLE metodos_pago ADD COLUMN IF NOT EXISTS holder_name VARCHAR(255)").catch(() => {});
-    await pool.query("ALTER TABLE metodos_pago ADD COLUMN IF NOT EXISTS proveedor VARCHAR(50)").catch(() => {});
+    await pool.query("ALTER TABLE metodos_pago ADD COLUMN IF NOT EXISTS holder_name VARCHAR(255)");
+    await pool.query("ALTER TABLE metodos_pago ADD COLUMN IF NOT EXISTS proveedor VARCHAR(50)");
     
-    console.log("✅ Tablas de 'pago-service' verificadas/creadas.");
+    // Eliminación de columnas sensibles si existían
+    await pool.query("ALTER TABLE metodos_pago DROP COLUMN IF EXISTS card_number").catch(() => {});
+    await pool.query("ALTER TABLE metodos_pago DROP COLUMN IF EXISTS cvv").catch(() => {});
+
+    console.log("✅ Migraciones completadas.");
+    process.exit(0);
   } catch (err) {
-    console.error("❌ Error inicializando tablas de pago:", err.message);
+    console.error("❌ Error en migraciones:", err.message);
+    process.exit(1);
   }
 };
 
-export const testDB = async () => {
-  try {
-    await pool.query("SELECT NOW()");
-    console.log("✅ DB conectada (Pago)");
-    await initDB();
-  } catch (err) {
-    console.error("❌ Error DB (Pago):", err.message);
-  }
-};
+migrate();

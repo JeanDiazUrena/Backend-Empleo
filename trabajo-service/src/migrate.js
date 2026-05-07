@@ -1,23 +1,28 @@
 import pkg from 'pg';
-const { Pool } = pkg;
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-export const pool = new Pool({
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+const { Pool } = pkg;
+
+const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
   database: process.env.DB_NAME,
   password: String(process.env.DB_PASSWORD),
   port: Number(process.env.DB_PORT),
-
-  ssl: {
-    rejectUnauthorized: false,
-  },
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
-export const initDB = async () => {
+const migrate = async () => {
   try {
+    console.log("🚀 Iniciando migraciones de trabajo-service...");
+
     // 1. Trabajos
     await pool.query(`
       CREATE TABLE IF NOT EXISTS trabajos (
@@ -60,18 +65,7 @@ export const initDB = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    // Ensure trabajo_id column exists (safe migration for existing tables)
     await pool.query(`ALTER TABLE cotizaciones ADD COLUMN IF NOT EXISTS trabajo_id INTEGER`).catch(() => {});
-
-    // Safe migration: comprobante fields for transfer payment confirmation flow
-    await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_url TEXT`).catch(() => {});
-    await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_estado VARCHAR(50) DEFAULT 'NINGUNO'`).catch(() => {});
-    await pool.query(`
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_trabajos_solicitud_activa
-      ON trabajos (solicitud_id)
-      WHERE solicitud_id IS NOT NULL
-        AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA')
-    `).catch(() => {});
 
     // 3. Acciones Trabajo
     await pool.query(`
@@ -141,24 +135,16 @@ export const initDB = async () => {
             brand VARCHAR(50),
             last4 VARCHAR(4),
             token TEXT,
-            expiry VARCHAR(7) -- MM/YYYY
+            expiry VARCHAR(7)
         );
     `);
-    console.log('✅ Tabla tarjetas_clientes asegurada');
-    console.log("✅ Tablas de 'trabajo-service' verificadas/creadas.");
+
+    console.log("✅ Migraciones completadas.");
+    process.exit(0);
   } catch (err) {
-    console.error("❌ Error inicializando tablas de trabajo:", err.message);
+    console.error("❌ Error en migraciones:", err.message);
+    process.exit(1);
   }
 };
 
-export const testDB = async () => {
-  try {
-    const res = await pool.query('SELECT NOW()');
-    console.log('✅ DB Trabajos conectada:', res.rows[0]);
-    await initDB();
-  } catch (err) {
-    console.error('❌ Error DB Trabajos:', err.message);
-  }
-};
-
-export default pool;
+migrate();

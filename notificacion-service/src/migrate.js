@@ -1,22 +1,28 @@
-import pg from "pg";
+import pkg from "pg";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const { Pool } = pg;
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
-export const pool = new Pool({
+const { Pool } = pkg;
+
+const pool = new Pool({
     host: process.env.DB_HOST,
     port: Number(process.env.DB_PORT),
     database: process.env.DB_NAME,
     user: process.env.DB_USER,
     password: String(process.env.DB_PASSWORD),
-
     ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
-const initDB = async () => {
+const migrate = async () => {
     try {
+        console.log("🚀 Iniciando migraciones de notificacion-service...");
+        
         await pool.query(`
             CREATE TABLE IF NOT EXISTS notificaciones (
                 id SERIAL PRIMARY KEY,
@@ -28,18 +34,13 @@ const initDB = async () => {
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         `);
-        console.log("✅ Tablas de 'notificacion-service' verificadas/creadas.");
+
+        console.log("✅ Migraciones completadas.");
+        process.exit(0);
     } catch (err) {
-        console.error("❌ Error inicializando tablas de notificaciones:", err.message);
+        console.error("❌ Error en migraciones:", err.message);
+        process.exit(1);
     }
 };
 
-export const testDB = async () => {
-    try {
-        await pool.query("SELECT NOW()");
-        console.log("✅ Conexión a la base de datos exitosa (Notificaciones)");
-        await initDB();
-    } catch (err) {
-        console.error("❌ Error conectando a la base de datos (Notificaciones):", err.message);
-    }
-};
+migrate();

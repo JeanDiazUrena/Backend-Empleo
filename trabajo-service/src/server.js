@@ -10,7 +10,12 @@ import { fileURLToPath } from 'url';
 dotenv.config();
 
 const app = express();
-app.use(cors());
+app.use(cors({
+    origin: ["http://localhost:5173", "http://localhost:4000"],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+}));
 app.use(express.json());
 
 const __filename = fileURLToPath(import.meta.url);
@@ -78,6 +83,25 @@ app.post('/api/trabajos', async (req, res) => {
     }
 
     try {
+        if (solicitud_id) {
+            const existingJob = await pool.query(
+                `SELECT * FROM trabajos
+                 WHERE solicitud_id = $1
+                   AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA')
+                 ORDER BY created_at DESC
+                 LIMIT 1`,
+                [solicitud_id]
+            );
+
+            if (existingJob.rows.length > 0) {
+                return res.json({
+                    success: true,
+                    alreadyExists: true,
+                    trabajo: existingJob.rows[0]
+                });
+            }
+        }
+
         let metodoPago = normalizePaymentMethod(req.body.metodo_pago);
         let montoAcordado = parseMoney(req.body.monto_acordado ?? req.body.monto_total ?? presupuesto);
 

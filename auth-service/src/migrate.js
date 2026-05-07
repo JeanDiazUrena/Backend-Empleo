@@ -1,10 +1,16 @@
 import pkg from 'pg';
-const { Pool } = pkg;
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-export const pool = new Pool({
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+const { Pool } = pkg;
+
+const pool = new Pool({
   user: process.env.DB_USER,
   host: process.env.DB_HOST,
   database: process.env.DB_NAME,
@@ -13,8 +19,10 @@ export const pool = new Pool({
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
-const initDB = async () => {
+const migrate = async () => {
   try {
+    console.log("🚀 Iniciando migraciones de auth-service...");
+    
     await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"').catch(() => {});
 
     await pool.query(`
@@ -42,19 +50,13 @@ const initDB = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
-    console.log("✅ Tablas de 'auth-service' verificadas/creadas.");
+
+    console.log("✅ Migraciones completadas.");
+    process.exit(0);
   } catch (err) {
-    console.error("❌ Error inicializando tablas de auth:", err.message);
+    console.error("❌ Error en migraciones:", err.message);
+    process.exit(1);
   }
 };
 
-export const testDB = async () => {
-  try {
-    await pool.query('SELECT NOW()');
-    console.log('✅ Conexión a la base de datos exitosa (Auth)');
-    await initDB();
-  } catch (err) {
-    console.error('❌ Error conectando a la base de datos (Auth):', err.message);
-  }
-};
-
+migrate();

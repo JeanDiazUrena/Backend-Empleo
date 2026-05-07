@@ -1,23 +1,29 @@
 import pkg from "pg";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from 'url';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const { Pool } = pkg;
 
-export const pool = new Pool({
+const pool = new Pool({
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT),
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: String(process.env.DB_PASSWORD),
-
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 });
 
-const initDB = async () => {
+const migrate = async () => {
   try {
-    await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"').catch(() => {});
+    console.log("🚀 Iniciando migraciones de perfile-service...");
+    
+    await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
 
     // Profesionales
     await pool.query(`
@@ -72,7 +78,7 @@ const initDB = async () => {
         id SERIAL PRIMARY KEY,
         nombre VARCHAR(255) UNIQUE NOT NULL
       );
-    `).catch(() => {});
+    `);
 
     // Relaciones
     await pool.query(`
@@ -86,7 +92,7 @@ const initDB = async () => {
         habilidad_id INTEGER REFERENCES habilidades(id) ON DELETE CASCADE,
         PRIMARY KEY (profesional_id, habilidad_id)
       );
-    `).catch(() => {});
+    `);
 
     // Portafolio
     await pool.query(`
@@ -118,9 +124,8 @@ const initDB = async () => {
         leido BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       );
-    `).catch(() => {});
-    
-    await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'texto'`).catch(() => {});
+    `);
+    await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'texto'`);
 
     // Solicitudes
     await pool.query(`
@@ -144,11 +149,10 @@ const initDB = async () => {
         fecha_creacion TIMESTAMP DEFAULT NOW(),
         CONSTRAINT fk_profesional FOREIGN KEY (profesional_id) REFERENCES profesionales(id) ON DELETE SET NULL
       )
-    `).catch(() => {});
-    
-    await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS monto_acordado NUMERIC(12,2)`).catch(() => {});
-    await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO'`).catch(() => {});
-    await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS estado_pago VARCHAR(50) DEFAULT 'PENDIENTE'`).catch(() => {});
+    `);
+    await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS monto_acordado NUMERIC(12,2)`);
+    await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO'`);
+    await pool.query(`ALTER TABLE solicitudes ADD COLUMN IF NOT EXISTS estado_pago VARCHAR(50) DEFAULT 'PENDIENTE'`);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS solicitud_rechazos (
@@ -158,20 +162,14 @@ const initDB = async () => {
         created_at TIMESTAMP DEFAULT NOW(),
         UNIQUE (solicitud_id, profesional_id)
       )
-    `).catch(() => {});
+    `);
 
-    console.log("✅ Tablas de 'perfile-service' verificadas/creadas.");
+    console.log("✅ Migraciones completadas.");
+    process.exit(0);
   } catch (err) {
-    console.error("❌ Error inicializando tablas de perfiles:", err.message);
+    console.error("❌ Error en migraciones:", err.message);
+    process.exit(1);
   }
 };
 
-export const testDB = async () => {
-  try {
-    const res = await pool.query("SELECT NOW()");
-    console.log("✅ DB conectada (perfiles):", res.rows[0]);
-    await initDB();
-  } catch (err) {
-    console.error("❌ Error DB perfiles:", err.message);
-  }
-};
+migrate();
