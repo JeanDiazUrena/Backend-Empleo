@@ -2,7 +2,10 @@ import express from 'express';
 import cors from 'cors';
 import pool, { testDB } from './db.js';
 import dotenv from 'dotenv';
-import jwt from 'jsonwebtoken';
+import multer from 'multer';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 
 dotenv.config();
 
@@ -10,19 +13,31 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// 🔐 Middleware para verificar JWT
-const verificarToken = (req, res, next) => {
-    const authHeader = req.headers["authorization"];
-    const token = authHeader && authHeader.split(" ")[1];
-    
-    if (!token) return res.status(403).json({ message: "Token requerido" });
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-    jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-        if (err) return res.status(401).json({ message: "Token inválido o expirado" });
-        req.user = decoded;
-        next();
-    });
-};
+// CONFIGURACIÓN DE SUBIDA DE COMPROBANTES
+const uploadDir = path.join(__dirname, '..', 'uploads');
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+
+app.use('/uploads', express.static(uploadDir));
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        cb(null, 'comprobante-' + uniqueSuffix + path.extname(file.originalname));
+    }
+});
+const upload = multer({ storage: storage });
+
+app.post('/api/trabajos/upload-comprobante', upload.single('comprobante'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: "No se subió ningún archivo" });
+    const fileUrl = `http://localhost:3003/uploads/${req.file.filename}`;
+    res.json({ url: fileUrl });
+});
 
 const COMMISSION_RATE = 0.10;
 
@@ -55,7 +70,7 @@ app.get('/', (req, res) => {
 // SCHEMA UPDATE (Movido a db.js y scripts de inicio)// =========================================================================
 // RUTA: CREAR TRABAJO (CONTRATAR)
 // =========================================================================
-app.post('/api/trabajos', verificarToken, async (req, res) => {
+app.post('/api/trabajos', async (req, res) => {
     const { cliente_id, profesional_id, solicitud_id, titulo, descripcion, horario, presupuesto, cliente_nombre, categoria } = req.body;
 
     if (!cliente_id || !profesional_id) {
@@ -148,7 +163,7 @@ app.post('/api/trabajos', verificarToken, async (req, res) => {
 // =========================================================================
 // RUTA: OBTENER COTIZACIONES POR CLIENTE (PENDIENTES)
 // =========================================================================
-app.get('/api/cotizaciones/cliente/:clienteId', verificarToken, async (req, res) => {
+app.get('/api/cotizaciones/cliente/:clienteId', async (req, res) => {
     try {
         const { clienteId } = req.params;
         const result = await pool.query(
@@ -187,7 +202,7 @@ app.get('/api/cotizaciones/trabajo/:trabajoId', async (req, res) => {
 // =========================================================================
 // RUTA: OBTENER COTIZACIONES POR PROFESIONAL (PENDIENTES)
 // =========================================================================
-app.get('/api/cotizaciones/profesional/:profesionalId', verificarToken, async (req, res) => {
+app.get('/api/cotizaciones/profesional/:profesionalId', async (req, res) => {
     try {
         const { profesionalId } = req.params;
         const result = await pool.query(
@@ -206,7 +221,7 @@ app.get('/api/cotizaciones/profesional/:profesionalId', verificarToken, async (r
 // =========================================================================
 // RUTA: CREAR COTIZACION DESDE DASHBOARD / CHAT
 // =========================================================================
-app.post('/api/cotizaciones', verificarToken, async (req, res) => {
+app.post('/api/cotizaciones', async (req, res) => {
     const {
         conversacion_id,
         solicitud_id,
@@ -269,7 +284,7 @@ app.post('/api/cotizaciones', verificarToken, async (req, res) => {
 // =========================================================================
 // RUTA: EDITAR COTIZACION ANTES DE QUE EL TRABAJO TERMINE
 // =========================================================================
-app.put('/api/cotizaciones/:id', verificarToken, async (req, res) => {
+app.put('/api/cotizaciones/:id', async (req, res) => {
     const cotizacionId = req.params.id;
     const { profesional_id, solicitud_id, titulo, descripcion, monto_total, metodo_pago } = req.body;
     const montoTotal = Number(monto_total);
@@ -313,7 +328,8 @@ app.put('/api/cotizaciones/:id', verificarToken, async (req, res) => {
                  titulo = $4,
                  descripcion = $5,
                  monto_total = $6,
-                 metodo_pago = $7
+                 metodo_pago = $7,
+                 estado = 'PENDIENTE'
              WHERE id = $1
                AND profesional_id = $2
              RETURNING *`,
@@ -350,6 +366,20 @@ app.put('/api/cotizaciones/:id', verificarToken, async (req, res) => {
             );
         }
 
+        // Notificar al cliente que la cotización fue actualizada
+        try {
+            await fetch('http://localhost:3005/notificaciones', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: cotizacion.cliente_id,
+                    title: 'Cotización Actualizada',
+                    message: `El profesional ha actualizado la cotización para "${cotizacion.titulo}". Revisa los nuevos detalles.`,
+                    type: 'info'
+                })
+            });
+        } catch (err) { console.error('Error enviando notificacion', err); }
+
         await client.query('COMMIT');
         res.json({ success: true, cotizacion });
     } catch (error) {
@@ -364,7 +394,7 @@ app.put('/api/cotizaciones/:id', verificarToken, async (req, res) => {
 // =========================================================================
 // RUTA: CLIENTE ACEPTA COTIZACION Y SE CREA TRABAJO
 // =========================================================================
-app.put('/api/cotizaciones/:id/aceptar', verificarToken, async (req, res) => {
+app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
     const cotizacionId = req.params.id;
     const { cliente_id } = req.body;
     const client = await pool.connect();
@@ -492,7 +522,7 @@ app.put('/api/cotizaciones/:id/aceptar', verificarToken, async (req, res) => {
 // =========================================================================
 // RUTA: CONFIRMAR TRABAJO 
 // =========================================================================
-app.post('/api/trabajos/:id/confirmar', verificarToken, async (req, res) => {
+app.post('/api/trabajos/:id/confirmar', async (req, res) => {
     const trabajoId = req.params.id;
     const { cliente_id, comentario } = req.body;
 
@@ -586,7 +616,7 @@ app.post('/api/trabajos/:id/confirmar', verificarToken, async (req, res) => {
 // =========================================================================
 // RUTA: FINALIZAR TRABAJO Y COBRAR COMISIONES
 // =========================================================================
-app.post('/api/trabajos/:id/finalizar', verificarToken, async (req, res) => {
+app.post('/api/trabajos/:id/finalizar', async (req, res) => {
     const trabajo_id = req.params.id;
     const { monto_final } = req.body;
 
@@ -636,6 +666,48 @@ app.post('/api/trabajos/:id/finalizar', verificarToken, async (req, res) => {
             const metodoPago = normalizePaymentMethod(trabajo.metodo_pago);
             const montoComision = Number((montoAcordado * COMMISSION_RATE).toFixed(2));
 
+            if (metodoPago === 'TRANSFERENCIA' && req.body.comprobante_url) {
+                // ESCENARIO: TRANSFERENCIA CON COMPROBANTE PENDIENTE DE VALIDACIÓN
+                await client.query(
+                    `UPDATE trabajos
+                     SET estado = 'ESPERANDO_CONFIRMACION_TRANSFERENCIA',
+                         estado_pago = 'PENDIENTE',
+                         monto_acordado = $2,
+                         comprobante_url = $3,
+                         comprobante_estado = 'PENDIENTE'
+                     WHERE id = $1`,
+                    [trabajo_id, montoAcordado, req.body.comprobante_url]
+                );
+
+                await client.query(
+                    `INSERT INTO acciones_trabajo (trabajo_id, accion, descripcion, realizado_por)
+                     VALUES ($1, 'SUBIDA_COMPROBANTE', 'El cliente subió un comprobante de transferencia y espera confirmación del profesional', $2)`,
+                    [trabajo_id, trabajo.cliente_id]
+                );
+
+                await client.query('COMMIT');
+
+                // Notificar al profesional que debe revisar el comprobante
+                try {
+                    await fetch('http://localhost:3005/notificaciones', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            user_id: trabajo.profesional_id,
+                            title: 'Comprobante de Pago Recibido',
+                            message: `El cliente ha subido un comprobante para el trabajo "${trabajo.titulo || 'Servicio'}". Por favor, verifícalo para finalizar.`,
+                            type: 'info'
+                        })
+                    });
+                } catch (err) { console.error('Error enviando notificacion', err); }
+
+                return res.status(200).json({
+                    success: true,
+                    mensaje: 'Comprobante enviado. Esperando confirmación del profesional.',
+                    estado: 'ESPERANDO_CONFIRMACION_TRANSFERENCIA'
+                });
+            }
+
             if (metodoPago === 'EFECTIVO' || metodoPago === 'TRANSFERENCIA') {
                 await client.query(
                     `INSERT INTO billetera_profesional (profesional_id, balance)
@@ -673,7 +745,8 @@ app.post('/api/trabajos/:id/finalizar', verificarToken, async (req, res) => {
              SET estado = 'CONFIRMADO_CLIENTE',
                  estado_pago = 'LIBERADO',
                  monto_acordado = $2,
-                 monto_comision = $3
+                 monto_comision = $3,
+                 comprobante_estado = CASE WHEN metodo_pago = 'TRANSFERENCIA' THEN 'APROBADO' ELSE comprobante_estado END
              WHERE id = $1`,
                 [trabajo_id, montoAcordado, montoComision]
             );
@@ -786,7 +859,7 @@ app.post('/api/trabajos/:id/finalizar', verificarToken, async (req, res) => {
 // =========================================================================
 // RUTA: PROFESIONAL MARCA COMO TERMINADO
 // =========================================================================
-app.put('/api/trabajos/:id/terminar', verificarToken, async (req, res) => {
+app.put('/api/trabajos/:id/terminar', async (req, res) => {
     const trabajoId = req.params.id;
     const { profesional_id } = req.body;
 
@@ -801,6 +874,16 @@ app.put('/api/trabajos/:id/terminar', verificarToken, async (req, res) => {
 
         if (buscarTrabajo.rows.length === 0) {
             throw new Error('Trabajo no encontrado o no le pertenece a este profesional.');
+        }
+
+        // Verificar si existe una cotización aceptada para este trabajo
+        const cotizacionRes = await client.query(
+            "SELECT * FROM cotizaciones WHERE trabajo_id = $1 AND estado = 'ACEPTADA'",
+            [trabajoId]
+        );
+
+        if (cotizacionRes.rows.length === 0) {
+            throw new Error('Debe existir una cotización aceptada por el cliente antes de terminar el trabajo.');
         }
 
         await client.query(
@@ -917,7 +1000,7 @@ app.get('/api/trabajos/:id', async (req, res) => {
 app.get('/api/trabajos/cliente/:id', async (req, res) => {
     try {
         const result = await pool.query(
-            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL') ORDER BY created_at DESC",
+            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA') ORDER BY created_at DESC",
             [req.params.id]
         );
         res.json(result.rows);
@@ -1027,6 +1110,120 @@ app.get('/api/trabajos/:id/recibo', async (req, res) => {
     } catch (error) {
         console.error("Error obteniendo recibo:", error);
         res.status(500).json({ error: "Error del servidor" });
+    }
+});
+
+// =========================================================================
+// RUTA: PROFESIONAL CONFIRMA TRANSFERENCIA
+// =========================================================================
+app.post('/api/trabajos/:id/confirmar-transferencia', async (req, res) => {
+    const trabajo_id = req.params.id;
+    const { profesional_id } = req.body;
+
+    const client = await pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const queryJob = `
+            SELECT * FROM trabajos
+            WHERE id = $1 AND profesional_id = $2
+            FOR UPDATE
+        `;
+        const resultJob = await client.query(queryJob, [trabajo_id, profesional_id]);
+
+        if (resultJob.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Trabajo no encontrado o no pertenece a este profesional' });
+        }
+
+        const trabajo = resultJob.rows[0];
+
+        if (trabajo.estado !== 'ESPERANDO_CONFIRMACION_TRANSFERENCIA') {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'El trabajo no está en espera de confirmación de transferencia' });
+        }
+
+        const montoAcordado = Number(trabajo.monto_acordado);
+        const montoComision = Number((montoAcordado * COMMISSION_RATE).toFixed(2));
+
+        // Debitar comisión de la billetera
+        await client.query(
+            `INSERT INTO billetera_profesional (profesional_id, balance)
+             VALUES ($1, 0)
+             ON CONFLICT (profesional_id) DO NOTHING`,
+            [trabajo.profesional_id]
+        );
+
+        await client.query(
+            `UPDATE billetera_profesional
+             SET balance = balance - $2,
+                 total_comisiones_debitadas = total_comisiones_debitadas + $2,
+                 updated_at = NOW()
+             WHERE profesional_id = $1`,
+            [trabajo.profesional_id, montoComision]
+        );
+
+        await client.query(
+            `INSERT INTO movimientos_billetera (profesional_id, trabajo_id, tipo, monto, descripcion)
+             VALUES ($1, $2, 'DEBITO_COMISION', $3, $4)`,
+            [
+                trabajo.profesional_id,
+                trabajo_id,
+                montoComision,
+                `Comision ServiHub ${(COMMISSION_RATE * 100).toFixed(0)}% por pago TRANSFERENCIA confirmado`
+            ]
+        );
+
+        // Finalizar trabajo
+        await client.query(
+            `UPDATE trabajos
+             SET estado = 'CONFIRMADO_CLIENTE',
+                 estado_pago = 'LIBERADO',
+                 monto_comision = $2,
+                 comprobante_estado = 'APROBADO'
+             WHERE id = $1`,
+            [trabajo_id, montoComision]
+        );
+
+        await client.query(
+            `INSERT INTO acciones_trabajo (trabajo_id, accion, descripcion, realizado_por)
+             VALUES ($1, 'CONFIRMACION_TRANSFERENCIA', 'El profesional confirmó la recepción de la transferencia', $2)`,
+            [trabajo_id, profesional_id]
+        );
+
+        await client.query('COMMIT');
+
+        // Cerrar solicitud en perfiles-service
+        if (trabajo.solicitud_id) {
+            try {
+                await fetch(`http://localhost:3001/api/solicitudes/${trabajo.solicitud_id}/finalizar`, { method: 'PUT' });
+            } catch (err) {
+                console.error('Error cerrando solicitud en perfiles-service:', err.message);
+            }
+        }
+
+        // Notificar al cliente
+        try {
+            await fetch('http://localhost:3005/notificaciones', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    user_id: trabajo.cliente_id,
+                    title: 'Pago Confirmado',
+                    message: `El profesional ha confirmado tu pago por transferencia para el trabajo "${trabajo.titulo || 'Servicio'}". Ya puedes ver tu recibo.`,
+                    type: 'success'
+                })
+            });
+        } catch (err) { console.error('Error enviando notificacion', err); }
+
+        res.json({ success: true, mensaje: 'Transferencia confirmada y trabajo finalizado.' });
+    } catch (error) {
+        await client.query('ROLLBACK');
+        console.error('Error confirmando transferencia:', error.message);
+        res.status(500).json({ error: 'Error interno del servidor' });
+    } finally {
+        client.release();
     }
 });
 
