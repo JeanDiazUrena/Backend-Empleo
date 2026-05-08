@@ -18,7 +18,7 @@ const server = http.createServer(app);
 // SOCKET.IO PROXY (Hacia Perfiles Service que es el principal para Chat)
 // ================================
 const socketProxy = createProxyMiddleware({
-    target: "http://127.0.0.1:3010",
+    target: "http://127.0.0.1:3001",
     changeOrigin: true,
     ws: true,
     secure: false,
@@ -30,7 +30,7 @@ const socketProxy = createProxyMiddleware({
                 res.writeHead(502, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({
                     error: "Socket Gateway Error",
-                    details: "No se pudo conectar con perfile-service en el puerto 3010"
+                    details: "No se pudo conectar con perfile-service en el puerto 3001"
                 }));
             } else if (res && typeof res.end === "function") {
                 res.end();
@@ -51,7 +51,7 @@ app.use((req, res, next) => {
 // ================================
 const routes = {
     "/auth-service": "http://localhost:3000",
-    "/perfiles-service": "http://localhost:3010",
+    "/perfiles-service": "http://localhost:3001",
     "/pagos-service": "http://localhost:3002",
     "/trabajos-service": "http://localhost:3003",
     "/notificaciones-service": "http://localhost:3005"

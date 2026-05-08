@@ -4,7 +4,7 @@ const net = require('net');
 
 const services = [
     { name: 'AUTH', dir: 'auth-service', port: 3000 },
-    { name: 'PERFILES', dir: 'perfile-service', port: 3010 },
+    { name: 'PERFILES', dir: 'perfile-service', port: 3001 },
     { name: 'PAGOS', dir: 'pago-service', port: 3002 },
     { name: 'TRABAJOS', dir: 'trabajo-service', port: 3003 },
     { name: 'NOTIF', dir: 'notificacion-service', port: 3005 },
@@ -50,7 +50,8 @@ const startService = (service) => {
     const devCommand = getDevCommand();
     const child = spawn(devCommand.command, devCommand.args, {
         cwd: path.join(__dirname, service.dir),
-        stdio: 'inherit'
+        stdio: 'inherit',
+        env: { ...process.env, PGSSLMODE: 'require' }
     });
 
     child.on('error', (err) => {
