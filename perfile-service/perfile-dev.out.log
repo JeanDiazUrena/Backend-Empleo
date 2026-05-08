@@ -20,3 +20,38 @@ SERVIDOR 3010 con Socket.io activo
 ✅ DB conectada (perfiles): { now: 2026-05-07T22:53:40.326Z }
 ✅ Tablas de 'perfile-service' verificadas/creadas.
 [31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+◇ injected env (10) from .env // tip: ⌘ enable debugging { debug: true }
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+SERVIDOR 3010 con Socket.io activo
+✅ DB conectada (perfiles): { now: 2026-05-08T01:54:15.583Z }
+✅ Tablas de 'perfile-service' verificadas/creadas.
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+◇ injected env (10) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+SERVIDOR 3010 con Socket.io activo
+✅ DB conectada (perfiles): { now: 2026-05-08T01:55:42.080Z }
+✅ Tablas de 'perfile-service' verificadas/creadas.
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+◇ injected env (10) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+SERVIDOR 3010 con Socket.io activo
+✅ DB conectada (perfiles): { now: 2026-05-08T01:57:03.381Z }
+✅ Tablas de 'perfile-service' verificadas/creadas.
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+◇ injected env (10) from .env // tip: ⌘ override existing { override: true }
+◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+SERVIDOR 3010 con Socket.io activo
+✅ DB conectada (perfiles): { now: 2026-05-08T01:57:20.054Z }
+✅ Tablas de 'perfile-service' verificadas/creadas.
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+◇ injected env (10) from .env // tip: ⌘ suppress logs { quiet: true }
+◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+SERVIDOR 3010 con Socket.io activo
+✅ DB conectada (perfiles): { now: 2026-05-08T01:57:27.912Z }
+✅ Tablas de 'perfile-service' verificadas/creadas.

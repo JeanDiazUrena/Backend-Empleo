@@ -68,7 +68,7 @@ const parseMoney = (value) => {
 };
 
 const CLIENT_PROFILE_INCOMPLETE_MESSAGE = "Debes completar tu perfil antes de hacer una solicitud.";
-const PERFILES_SERVICE_URL = process.env.PERFILES_SERVICE_URL || "http://localhost:3010";
+const PERFILES_SERVICE_URL = process.env.PERFILES_SERVICE_URL || "http://localhost:3001";
 
 const isClientProfileComplete = (cliente) => {
     if (!cliente) return false;

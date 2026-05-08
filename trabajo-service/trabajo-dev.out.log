@@ -23,3 +23,11 @@
 ✅ Tabla tarjetas_clientes asegurada
 ✅ Tablas de 'trabajo-service' verificadas/creadas.
 [31m[nodemon] app crashed - waiting for file changes before starting...[39m
+[32m[nodemon] restarting due to changes...[39m
+[32m[nodemon] starting `node src/server.js`[39m
+◇ injected env (10) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+✅ Microservicio de Trabajos corriendo en http://localhost:3003
+✅ DB Trabajos conectada: { now: 2026-05-08T01:54:15.322Z }
+✅ Tabla tarjetas_clientes asegurada
+✅ Tablas de 'trabajo-service' verificadas/creadas.
