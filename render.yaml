@@ -1,0 +1,84 @@
+services:
+  # SERVICIO: AUTH
+  - type: web
+    name: servihub-auth
+    env: node
+    plan: free  # <--- ESTO EVITA QUE TE COBREN
+    rootDir: auth-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+
+  # SERVICIO: PERFILES
+  - type: web
+    name: servihub-perfil
+    env: node
+    plan: free
+    rootDir: perfile-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: TRABAJOS
+  - type: web
+    name: servihub-trabajo
+    env: node
+    plan: free
+    rootDir: trabajo-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: PAGOS
+  - type: web
+    name: servihub-pago
+    env: node
+    plan: free
+    rootDir: pago-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: NOTIFICACIONES
+  - type: web
+    name: servihub-notificacion
+    env: node
+    plan: free
+    rootDir: notificacion-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: GATEWAY (El director de tráfico)
+  - type: web
+    name: servihub-gateway
+    env: node
+    plan: free
+    rootDir: gateway
+    buildCommand: npm install
+    startCommand: node serve.js
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: AUTH_SERVICE_URL
+        value: https://servihub-auth.onrender.com
+      - key: PERFILES_SERVICE_URL
+        value: https://servihub-perfil.onrender.com
+      - key: TRABAJOS_SERVICE_URL
+        value: https://servihub-trabajo.onrender.com
+      - key: NOTIFICACIONES_SERVICE_URL
+        value: https://servihub-notificacion.onrender.com
+      - key: PAGOS_SERVICE_URL
+        value: https://servihub-pago.onrender.com

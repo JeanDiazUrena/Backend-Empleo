@@ -41,8 +41,8 @@ const initDB = async () => {
         cuenta_bancaria VARCHAR(255),
         banco VARCHAR(255),
         estado_financiero VARCHAR(50) DEFAULT 'activo',
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -57,8 +57,8 @@ const initDB = async () => {
         direccion TEXT,
         avatar TEXT,
         banner TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -96,7 +96,7 @@ const initDB = async () => {
         titulo VARCHAR(255),
         descripcion TEXT,
         imagen_url TEXT,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -106,7 +106,7 @@ const initDB = async () => {
         id SERIAL PRIMARY KEY,
         cliente_id UUID NOT NULL,
         profesional_usuario_id UUID NOT NULL,
-        created_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE(cliente_id, profesional_usuario_id)
       );
       CREATE TABLE IF NOT EXISTS mensajes (
@@ -116,7 +116,7 @@ const initDB = async () => {
         contenido TEXT NOT NULL,
         tipo VARCHAR(20) DEFAULT 'texto',
         leido BOOLEAN DEFAULT false,
-        created_at TIMESTAMP DEFAULT NOW()
+        created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `).catch(() => {});
     
@@ -141,7 +141,7 @@ const initDB = async () => {
         estado VARCHAR(50) DEFAULT 'pendiente',
         metodo_pago VARCHAR(50) DEFAULT 'EFECTIVO',
         estado_pago VARCHAR(50) DEFAULT 'PENDIENTE',
-        fecha_creacion TIMESTAMP DEFAULT NOW(),
+        fecha_creacion TIMESTAMPTZ DEFAULT NOW(),
         CONSTRAINT fk_profesional FOREIGN KEY (profesional_id) REFERENCES profesionales(id) ON DELETE SET NULL
       )
     `).catch(() => {});
@@ -155,10 +155,27 @@ const initDB = async () => {
         id SERIAL PRIMARY KEY,
         solicitud_id INTEGER NOT NULL REFERENCES solicitudes(id) ON DELETE CASCADE,
         profesional_id UUID NOT NULL REFERENCES profesionales(id) ON DELETE CASCADE,
-        created_at TIMESTAMP DEFAULT NOW(),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
         UNIQUE (solicitud_id, profesional_id)
       )
     `).catch(() => {});
+
+    // MIGRACIONES DE ZONA HORARIA
+    const tablesToMigrate = [
+      ['profesionales', ['created_at', 'updated_at']],
+      ['clientes', ['created_at', 'updated_at']],
+      ['trabajos_portafolio', ['created_at']],
+      ['conversaciones', ['created_at']],
+      ['mensajes', ['created_at']],
+      ['solicitudes', ['fecha_creacion']],
+      ['solicitud_rechazos', ['created_at']]
+    ];
+
+    for (const [table, columns] of tablesToMigrate) {
+      for (const col of columns) {
+        await pool.query(`ALTER TABLE ${table} ALTER COLUMN ${col} TYPE TIMESTAMPTZ`).catch(() => {});
+      }
+    }
 
     console.log("✅ Tablas de 'perfile-service' verificadas/creadas.");
   } catch (err) {

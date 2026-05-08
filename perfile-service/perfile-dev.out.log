@@ -55,3 +55,4 @@ SERVIDOR 3010 con Socket.io activo
 SERVIDOR 3010 con Socket.io activo
 ✅ DB conectada (perfiles): { now: 2026-05-08T01:57:27.912Z }
 ✅ Tablas de 'perfile-service' verificadas/creadas.
+[31m[nodemon] app crashed - waiting for file changes before starting...[39m

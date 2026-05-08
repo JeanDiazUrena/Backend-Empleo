@@ -25,9 +25,11 @@ const initDB = async () => {
                 message TEXT NOT NULL,
                 type VARCHAR(50) DEFAULT 'info',
                 is_read BOOLEAN DEFAULT false,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
             )
         `);
+        // Migración de zona horaria
+        await pool.query(`ALTER TABLE notificaciones ALTER COLUMN created_at TYPE TIMESTAMPTZ`).catch(() => {});
         console.log("✅ Tablas de 'notificacion-service' verificadas/creadas.");
     } catch (err) {
         console.error("❌ Error inicializando tablas de notificaciones:", err.message);

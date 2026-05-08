@@ -217,7 +217,10 @@ app.get("/", (req, res) => {
 
 // --- START SERVER ---
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, async () => {
-    console.log(`🚀 Auth + Socket.IO corriendo en puerto ${PORT}`);
-    await testDB();
-});
+if (process.env.NODE_ENV !== 'test') {
+    server.listen(PORT, async () => {
+        console.log(`🚀 Auth + Socket.IO corriendo en puerto ${PORT}`);
+        await testDB();
+    });
+}
+export { app, server };
