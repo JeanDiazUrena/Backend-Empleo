@@ -1087,7 +1087,11 @@ app.get('/api/trabajos/cliente/:id', async (req, res) => {
 app.get('/api/trabajos/cliente/:id/historial', async (req, res) => {
     try {
         const result = await pool.query(
-            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado = 'CONFIRMADO_CLIENTE' ORDER BY created_at DESC",
+            `SELECT t.*, 
+                    (SELECT COUNT(*) FROM resenas r WHERE r.trabajo_id = t.id) > 0 as tiene_resena
+             FROM trabajos t 
+             WHERE t.cliente_id = $1 AND t.estado = 'CONFIRMADO_CLIENTE' 
+             ORDER BY t.created_at DESC`,
             [req.params.id]
         );
         res.json(result.rows);
