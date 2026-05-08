@@ -121,12 +121,16 @@ const initDB = async () => {
         remitente_id UUID NOT NULL,
         contenido TEXT NOT NULL,
         tipo VARCHAR(20) DEFAULT 'texto',
+        nombre_archivo TEXT,
+        metadata JSONB,
         leido BOOLEAN DEFAULT false,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
     `).catch(() => {});
     
     await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'texto'`).catch(() => {});
+    await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS nombre_archivo TEXT`).catch(() => {});
+    await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS metadata JSONB`).catch(() => {});
 
     // Solicitudes
     await pool.query(`

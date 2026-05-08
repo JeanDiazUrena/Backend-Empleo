@@ -128,11 +128,15 @@ const migrate = async () => {
         remitente_id UUID NOT NULL,
         contenido TEXT NOT NULL,
         tipo VARCHAR(20) DEFAULT 'texto',
+        nombre_archivo TEXT,
+        metadata JSONB,
         leido BOOLEAN DEFAULT false,
         created_at TIMESTAMP DEFAULT NOW()
       );
     `);
     await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS tipo VARCHAR(20) DEFAULT 'texto'`);
+    await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS nombre_archivo TEXT`);
+    await pool.query(`ALTER TABLE mensajes ADD COLUMN IF NOT EXISTS metadata JSONB`);
 
     // Solicitudes
     await pool.query(`

@@ -40,7 +40,10 @@ const storage = multer.diskStorage({
         cb(null, 'comprobante-' + uniqueSuffix + path.extname(file.originalname));
     }
 });
-const upload = multer({ storage: storage });
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 }
+});
 const getUploadUrl = (filename) => `/uploads/${filename}`;
 
 app.post('/api/trabajos/upload-comprobante', upload.single('comprobante'), (req, res) => {

@@ -67,7 +67,10 @@ const storage = multer.diskStorage({
         cb(null, uniqueSuffix + path.extname(file.originalname));
     }
 });
-const upload = multer({ storage: storage, limits: { fileSize: 50 * 1024 * 1024 } });
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 }
+});
 const getUploadUrl = (filename) => `/uploads/${filename}`;
 
 // ==========================================
@@ -936,7 +939,12 @@ app.put("/api/chat/leer/:conversacionId", async (req, res) => {
 app.post("/api/chat/upload", upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No se subió ningún archivo" });
     const fileUrl = getUploadUrl(req.file.filename);
-    res.json({ url: fileUrl, filename: req.file.originalname, mimetype: req.file.mimetype });
+    res.json({
+        url: fileUrl,
+        filename: req.file.originalname,
+        size: req.file.size,
+        mimetype: req.file.mimetype
+    });
 });
 
 app.get("/api/chat/unread-count/:usuarioId", async (req, res) => {
@@ -974,11 +982,12 @@ io.on("connection", (socket) => {
     });
 
     socket.on("send_message", async (data) => {
-        const { conversacion_id, remitente_id, contenido, tipo } = data;
+        const { conversacion_id, remitente_id, contenido, tipo, nombre_archivo, metadata } = data;
         try {
             const result = await pool.query(
-                `INSERT INTO mensajes (conversacion_id, remitente_id, contenido, tipo) VALUES ($1, $2, $3, $4) RETURNING *`,
-                [conversacion_id, remitente_id, contenido, tipo || 'texto']
+                `INSERT INTO mensajes (conversacion_id, remitente_id, contenido, tipo, nombre_archivo, metadata)
+                 VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+                [conversacion_id, remitente_id, contenido, tipo || 'texto', nombre_archivo || null, metadata || null]
             );
             // Incluir el avatar del remitente o nombre extra opcional
             const newMsg = result.rows[0];
