@@ -3,6 +3,7 @@ services:
   - type: web
     name: servihub-auth
     env: node
+    plan: free  # <--- ESTO EVITA QUE TE COBREN
     rootDir: auth-service
     buildCommand: npm install
     startCommand: node src/server.js
@@ -16,6 +17,7 @@ services:
   - type: web
     name: servihub-perfil
     env: node
+    plan: free
     rootDir: perfile-service
     buildCommand: npm install
     startCommand: node src/server.js
@@ -27,6 +29,7 @@ services:
   - type: web
     name: servihub-trabajo
     env: node
+    plan: free
     rootDir: trabajo-service
     buildCommand: npm install
     startCommand: node src/server.js
@@ -38,6 +41,7 @@ services:
   - type: web
     name: servihub-pago
     env: node
+    plan: free
     rootDir: pago-service
     buildCommand: npm install
     startCommand: node src/server.js
@@ -49,6 +53,7 @@ services:
   - type: web
     name: servihub-notificacion
     env: node
+    plan: free
     rootDir: notificacion-service
     buildCommand: npm install
     startCommand: node src/server.js
@@ -60,6 +65,7 @@ services:
   - type: web
     name: servihub-gateway
     env: node
+    plan: free
     rootDir: gateway
     buildCommand: npm install
     startCommand: node serve.js
