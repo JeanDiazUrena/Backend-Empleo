@@ -64,6 +64,7 @@ const storage = multer.diskStorage({
     }
 });
 const upload = multer({ storage: storage, limits: { fileSize: 50 * 1024 * 1024 } });
+const getUploadUrl = (filename) => `/uploads/${filename}`;
 
 // ==========================================
 // RUTA 1: GUARDAR O ACTUALIZAR PERFIL (PROFESIONALES)
@@ -78,8 +79,8 @@ app.post("/api/perfiles", verificarToken, upload.fields([{ name: 'avatar', maxCo
         
         const checkUser = await pool.query("SELECT id FROM profesionales WHERE usuario_id = $1", [usuario_id]);
         let profesionalId;
-        const avatarUrl = req.files['avatar'] ? `http://localhost:${PORT}/uploads/${req.files['avatar'][0].filename}` : null;
-        const coverUrl = req.files['cover'] ? `http://localhost:${PORT}/uploads/${req.files['cover'][0].filename}` : null;
+        const avatarUrl = req.files['avatar'] ? getUploadUrl(req.files['avatar'][0].filename) : null;
+        const coverUrl = req.files['cover'] ? getUploadUrl(req.files['cover'][0].filename) : null;
 
         if (checkUser.rows.length > 0) {
             profesionalId = checkUser.rows[0].id;
@@ -258,7 +259,7 @@ app.post("/api/portfolio", verificarToken, upload.single('imagen'), async (req, 
             [profesional_id]
         );
         if (prof.rows.length === 0) return res.status(404).json({ message: "Perfil no existe" });
-        const imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+        const imagenUrl = getUploadUrl(req.file.filename);
         await pool.query("INSERT INTO trabajos_portafolio (profesional_id, titulo, descripcion, imagen_url) VALUES ($1, $2, $3, $4)", [prof.rows[0].id, titulo, descripcion, imagenUrl]);
         res.json({ message: "Creado" });
     } catch (err) { res.status(500).json({ error: err.message }); }
@@ -275,7 +276,7 @@ app.put("/api/portfolio/:id", upload.single('imagen'), async (req, res) => {
         const { id } = req.params;
         const { titulo, descripcion } = req.body;
         if (req.file) {
-            const imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+            const imagenUrl = getUploadUrl(req.file.filename);
             await pool.query("UPDATE trabajos_portafolio SET titulo=$1, descripcion=$2, imagen_url=$3 WHERE id=$4", [titulo, descripcion, imagenUrl, id]);
         } else {
             await pool.query("UPDATE trabajos_portafolio SET titulo=$1, descripcion=$2 WHERE id=$3", [titulo, descripcion, id]);
@@ -313,10 +314,10 @@ app.post("/api/clientes", verificarToken, upload.fields([{ name: 'avatar', maxCo
         let bannerUrl = null;
 
         if (req.files['avatar']) {
-            avatarUrl = `http://localhost:${PORT}/uploads/${req.files['avatar'][0].filename}`;
+            avatarUrl = getUploadUrl(req.files['avatar'][0].filename);
         }
         if (req.files['banner']) {
-            bannerUrl = `http://localhost:${PORT}/uploads/${req.files['banner'][0].filename}`;
+            bannerUrl = getUploadUrl(req.files['banner'][0].filename);
         }
 
         const check = await pool.query("SELECT id FROM clientes WHERE usuario_id = $1", [usuario_id]);
@@ -425,7 +426,7 @@ app.post("/api/solicitudes", verificarToken, upload.single('imagen'), async (req
 
         let imagenUrl = null;
         if (req.file) {
-            imagenUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+            imagenUrl = getUploadUrl(req.file.filename);
         }
         const result = await pool.query(
             "INSERT INTO solicitudes (cliente_id, titulo, categoria, descripcion, profesional_id, imagen_url, urgencia, ubicacion, disponibilidad, presupuesto_min, presupuesto_max, monto_acordado, metodo_pago, estado_pago) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 'PENDIENTE') RETURNING *",
@@ -930,7 +931,7 @@ app.put("/api/chat/leer/:conversacionId", async (req, res) => {
 // ==========================================
 app.post("/api/chat/upload", upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No se subió ningún archivo" });
-    const fileUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+    const fileUrl = getUploadUrl(req.file.filename);
     res.json({ url: fileUrl, filename: req.file.originalname, mimetype: req.file.mimetype });
 });
 

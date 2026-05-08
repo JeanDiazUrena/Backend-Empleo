@@ -37,10 +37,11 @@ const storage = multer.diskStorage({
     }
 });
 const upload = multer({ storage: storage });
+const getUploadUrl = (filename) => `/uploads/${filename}`;
 
 app.post('/api/trabajos/upload-comprobante', upload.single('comprobante'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No se subió ningún archivo" });
-    const fileUrl = `http://localhost:3003/uploads/${req.file.filename}`;
+    const fileUrl = getUploadUrl(req.file.filename);
     res.json({ url: fileUrl });
 });
 
