@@ -36,6 +36,10 @@ io.on("connection", (socket) => {
 app.use(cors());
 app.use(express.json());
 
+// 🩺 Endpoint de Salud para UptimeRobot
+app.get("/", (req, res) => res.send("🚀 Auth Service Online"));
+app.get("/health", (req, res) => res.status(200).json({ status: "ok", service: "auth-service" }));
+
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // 🔐 Middleware para verificar JWT

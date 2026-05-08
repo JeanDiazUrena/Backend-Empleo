@@ -18,6 +18,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// 🩺 Endpoint de Salud para UptimeRobot
+app.get("/", (req, res) => res.send("🚀 Trabajo Service Online"));
+app.get("/health", (req, res) => res.status(200).json({ status: "ok", service: "trabajo-service" }));
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 

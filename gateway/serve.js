@@ -38,6 +38,10 @@ app.use(cors(corsOptions));
 
 const server = http.createServer(app);
 
+// 🩺 Endpoint de Salud para UptimeRobot
+app.get("/", (req, res) => res.send("🚀 ServiHub Gateway Online"));
+app.get("/health", (req, res) => res.status(200).json({ status: "ok", service: "gateway" }));
+
 // ================================
 // SOCKET.IO PROXY (Hacia Auth Service que es el que tiene el servidor de Sockets)
 // ================================
@@ -85,15 +89,19 @@ for (const [path, target] of Object.entries(routes)) {
     app.use(path, createProxyMiddleware({
         target,
         changeOrigin: true,
+        secure: false,
+        xfwd: true,
         pathRewrite: {
             [`^${path}`]: ""
         },
         onError: (err, req, res) => {
             console.error(`ERROR GATEWAY (${path}):`, err.message);
-            res.status(500).json({
-                error: "Gateway Error",
-                details: err.message
-            });
+            if (!res.headersSent) {
+                res.status(502).json({
+                    error: "Gateway Error",
+                    details: `No se pudo conectar con el servicio en ${target}`
+                });
+            }
         }
     }));
 }

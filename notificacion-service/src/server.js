@@ -15,6 +15,10 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// 🩺 Endpoint de Salud para UptimeRobot
+app.get("/", (req, res) => res.send("🚀 Notificacion Service Online"));
+app.get("/health", (req, res) => res.status(200).json({ status: "ok", service: "notificacion-service" }));
+
 // 🔐 Middleware para verificar JWT
 const verificarToken = (req, res, next) => {
     const authHeader = req.headers["authorization"];

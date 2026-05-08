@@ -37,9 +37,9 @@ app.use((req, res, next) => {
 // ===============================
 // TEST
 // ===============================
-app.get("/", (req, res) => {
-    res.json({ success: true, message: "pa-service funcionando" });
-});
+// 🩺 Endpoint de Salud para UptimeRobot
+app.get("/", (req, res) => res.send("🚀 Pago Service Online"));
+app.get("/health", (req, res) => res.status(200).json({ status: "ok", service: "pago-service" }));
 
 // ===============================
 // PAGOS
