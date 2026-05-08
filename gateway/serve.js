@@ -27,12 +27,6 @@ app.use(cors({
     optionsSuccessStatus: 204
 }));
 
-app.options("*", cors({
-    origin: allowedOrigins,
-    credentials: true,
-    optionsSuccessStatus: 204
-}));
-
 const server = http.createServer(app);
 
 // ================================
