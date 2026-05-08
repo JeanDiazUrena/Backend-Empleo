@@ -43,10 +43,10 @@ app.get("/", (req, res) => res.send("🚀 ServiHub Gateway Online"));
 app.get("/health", (req, res) => res.status(200).json({ status: "ok", service: "gateway" }));
 
 // ================================
-// SOCKET.IO PROXY (Hacia Auth Service que es el que tiene el servidor de Sockets)
+// SOCKET.IO PROXY (hacia Perfiles, donde vive el chat en tiempo real)
 // ================================
 const socketProxy = createProxyMiddleware({
-    target: process.env.AUTH_SERVICE_URL || "http://127.0.0.1:3000",
+    target: process.env.SOCKET_SERVICE_URL || process.env.PERFILES_SERVICE_URL || "http://127.0.0.1:3001",
     changeOrigin: true,
     ws: true,
     secure: false,
@@ -58,7 +58,7 @@ const socketProxy = createProxyMiddleware({
                 res.writeHead(502, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({
                     error: "Socket Gateway Error",
-                    details: "No se pudo conectar con el Auth Service (Socket)"
+                    details: "No se pudo conectar con el servicio de chat (Socket)"
                 }));
             } else if (res && typeof res.end === "function") {
                 res.end();

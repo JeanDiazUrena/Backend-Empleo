@@ -76,6 +76,8 @@ services:
         value: https://frontendempleo.vercel.app,https://servihub-topaz.vercel.app,http://localhost:5173,http://127.0.0.1:5173
       - key: AUTH_SERVICE_URL
         value: https://servihub-auth.onrender.com
+      - key: SOCKET_SERVICE_URL
+        value: https://servihub-perfil.onrender.com
       - key: PERFILES_SERVICE_URL
         value: https://servihub-perfil.onrender.com
       - key: TRABAJOS_SERVICE_URL
