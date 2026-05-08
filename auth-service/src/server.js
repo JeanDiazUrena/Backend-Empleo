@@ -16,7 +16,7 @@ const server = http.createServer(app);
 // CONFIGURACIÓN DE SOCKET.IO
 const io = new Server(server, {
     cors: {
-        origin: ["https://servihub-topaz.vercel.apphttps://servihub-topaz.vercel.app/", "http://localhost:4000"],
+        origin: ["https://servihub-topaz.vercel.app", "http://localhost:4000"],
         credentials: true,
         methods: ["GET", "POST"]
     }
