@@ -81,12 +81,19 @@ const isClientProfileComplete = (cliente) => {
 
 const ensureClientProfileComplete = async (clienteId, res) => {
     try {
+        console.log(`[TRABAJOS] Validando perfil del cliente ${clienteId} en: ${PERFILES_SERVICE_URL}`);
         const response = await fetch(`${PERFILES_SERVICE_URL}/api/clientes/${clienteId}`);
-        const cliente = response.ok ? await response.json() : null;
+        
+        if (!response.ok) {
+            console.error(`[TRABAJOS] Error al consultar perfiles-service: ${response.status}`);
+            return res.status(503).json({ error: "El servicio de perfiles no respondió correctamente." });
+        }
+
+        const cliente = await response.json();
         if (isClientProfileComplete(cliente)) return true;
     } catch (error) {
-        console.error("No se pudo validar el perfil del cliente:", error.message);
-        return res.status(503).json({ error: "No se pudo validar el perfil del cliente. Intenta más tarde." });
+        console.error("❌ ERROR CRÍTICO conectando con perfiles-service:", error.message);
+        return res.status(503).json({ error: "No se pudo validar el perfil del cliente por un error de red interno." });
     }
 
     res.status(403).json({
