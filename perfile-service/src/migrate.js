@@ -31,6 +31,7 @@ const migrate = async () => {
     console.log("🚀 Iniciando migraciones de perfile-service...");
     
     await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"');
+    await pool.query('CREATE EXTENSION IF NOT EXISTS unaccent').catch(() => {});
 
     // Profesionales
     await pool.query(`

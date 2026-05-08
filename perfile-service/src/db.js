@@ -24,6 +24,7 @@ export const pool = new Pool(poolConfig);
 const initDB = async () => {
   try {
     await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto"').catch(() => {});
+    await pool.query('CREATE EXTENSION IF NOT EXISTS unaccent').catch(() => {});
 
     // Profesionales
     await pool.query(`

@@ -131,6 +131,40 @@ app.post("/api/perfiles", verificarToken, upload.fields([{ name: 'avatar', maxCo
 // ==========================================
 // RUTA 2B: OBTENER TODOS LOS PROFESIONALES (Para Explorar)
 // ==========================================
+const normalizeSearchText = (value = "") =>
+    String(value)
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .trim();
+
+const SEARCH_SYNONYMS = {
+    plomero: ["plomeria", "fontanero", "tuberia", "agua", "fuga"],
+    plomeria: ["plomero", "fontanero", "tuberia", "agua", "fuga"],
+    electricista: ["electricidad", "luz", "cableado", "breaker"],
+    tecnologia: ["tecnico", "computadora", "pc", "laptop", "programador", "web", "informatica"],
+    tecnico: ["tecnologia", "computadora", "pc", "laptop", "reparacion"],
+    hogar: ["casa", "limpieza", "mantenimiento", "plomeria", "electricidad"],
+    belleza: ["estetica", "maquillaje", "unas", "barberia", "peluqueria"],
+    educacion: ["clases", "tutor", "profesor", "curso"],
+    construccion: ["albanil", "obra", "remodelacion", "pintura"],
+    salud: ["medico", "terapia", "enfermeria", "fitness"],
+    legal: ["abogado", "contrato", "notario"],
+    eventos: ["fotografia", "decoracion", "musica", "dj", "catering"]
+};
+
+const expandSearchTerms = (value = "") => {
+    const normalized = normalizeSearchText(value);
+    const words = normalized.split(/[^a-z0-9]+/).filter((word) => word.length >= 2);
+    const expanded = new Set(words);
+
+    for (const word of words) {
+        for (const term of SEARCH_SYNONYMS[word] || []) expanded.add(term);
+    }
+
+    return Array.from(expanded).slice(0, 12);
+};
+
 app.get("/api/profesionales", async (req, res) => {
     const { busqueda, categoria, ciudad } = req.query;
     try {
@@ -148,19 +182,42 @@ app.get("/api/profesionales", async (req, res) => {
         const params = [];
         let i = 1;
 
-        if (busqueda) {
-            query += ` AND (LOWER(p.nombre) LIKE $${i} OR LOWER(p.profesion) LIKE $${i} OR LOWER(p.biografia) LIKE $${i})`;
-            params.push(`%${busqueda.toLowerCase()}%`);
-            i++;
+        const searchTerms = expandSearchTerms(busqueda);
+        if (searchTerms.length > 0) {
+            const clauses = searchTerms.map((term) => {
+                params.push(`%${term}%`);
+                const idx = i++;
+                return `
+                  (
+                    LOWER(unaccent(COALESCE(p.nombre, ''))) LIKE $${idx}
+                    OR LOWER(unaccent(COALESCE(p.profesion, ''))) LIKE $${idx}
+                    OR LOWER(unaccent(COALESCE(p.biografia, ''))) LIKE $${idx}
+                    OR LOWER(unaccent(COALESCE(p.ciudad, ''))) LIKE $${idx}
+                    OR LOWER(unaccent(COALESCE(p.sector, ''))) LIKE $${idx}
+                    OR EXISTS (
+                      SELECT 1 FROM categorias c
+                      JOIN profesional_categorias pc ON pc.categoria_id = c.id
+                      WHERE pc.profesional_id = p.id
+                        AND LOWER(unaccent(c.nombre)) LIKE $${idx}
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM habilidades h
+                      JOIN profesional_habilidades ph ON ph.habilidad_id = h.id
+                      WHERE ph.profesional_id = p.id
+                        AND LOWER(unaccent(h.nombre)) LIKE $${idx}
+                    )
+                  )`;
+            });
+            query += ` AND (${clauses.join(" OR ")})`;
         }
         if (categoria) {
-            query += ` AND EXISTS (SELECT 1 FROM categorias c JOIN profesional_categorias pc ON pc.categoria_id = c.id WHERE pc.profesional_id = p.id AND LOWER(c.nombre) = $${i})`;
-            params.push(categoria.toLowerCase());
+            query += ` AND EXISTS (SELECT 1 FROM categorias c JOIN profesional_categorias pc ON pc.categoria_id = c.id WHERE pc.profesional_id = p.id AND LOWER(unaccent(c.nombre)) = $${i})`;
+            params.push(normalizeSearchText(categoria));
             i++;
         }
         if (ciudad) {
-            query += ` AND (LOWER(p.ciudad) LIKE $${i} OR LOWER(p.sector) LIKE $${i})`;
-            params.push(`%${ciudad.toLowerCase()}%`);
+            query += ` AND (LOWER(unaccent(COALESCE(p.ciudad, ''))) LIKE $${i} OR LOWER(unaccent(COALESCE(p.sector, ''))) LIKE $${i})`;
+            params.push(`%${normalizeSearchText(ciudad)}%`);
             i++;
         }
 
