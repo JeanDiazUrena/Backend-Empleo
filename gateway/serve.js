@@ -39,10 +39,10 @@ app.use(cors(corsOptions));
 const server = http.createServer(app);
 
 // ================================
-// SOCKET.IO PROXY (Hacia Perfiles Service que es el principal para Chat)
+// SOCKET.IO PROXY (Hacia Auth Service que es el que tiene el servidor de Sockets)
 // ================================
 const socketProxy = createProxyMiddleware({
-    target: process.env.PERFILES_SERVICE_URL || "http://127.0.0.1:3010",
+    target: process.env.AUTH_SERVICE_URL || "http://127.0.0.1:3000",
     changeOrigin: true,
     ws: true,
     secure: false,
@@ -54,7 +54,7 @@ const socketProxy = createProxyMiddleware({
                 res.writeHead(502, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({
                     error: "Socket Gateway Error",
-                    details: "No se pudo conectar con perfile-service en el puerto 3010"
+                    details: "No se pudo conectar con el Auth Service (Socket)"
                 }));
             } else if (res && typeof res.end === "function") {
                 res.end();
