@@ -10,7 +10,8 @@ const app = express();
 const defaultOrigins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "https://frontendempleo.vercel.app"
+    "https://frontendempleo.vercel.app",
+    "https://servihub-topaz.vercel.app"
 ];
 
 const configuredOrigins = (process.env.CORS_ORIGINS || "")
@@ -22,7 +23,14 @@ const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 
 app.use(cors({
     origin: allowedOrigins,
-    credentials: true
+    credentials: true,
+    optionsSuccessStatus: 204
+}));
+
+app.options("*", cors({
+    origin: allowedOrigins,
+    credentials: true,
+    optionsSuccessStatus: 204
 }));
 
 const server = http.createServer(app);

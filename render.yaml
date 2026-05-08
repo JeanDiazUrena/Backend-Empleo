@@ -73,7 +73,7 @@ services:
       - key: PORT
         value: "10000"
       - key: CORS_ORIGINS
-        value: https://frontendempleo.vercel.app,http://localhost:5173,http://127.0.0.1:5173
+        value: https://frontendempleo.vercel.app,https://servihub-topaz.vercel.app,http://localhost:5173,http://127.0.0.1:5173
       - key: AUTH_SERVICE_URL
         value: https://servihub-auth.onrender.com
       - key: PERFILES_SERVICE_URL
