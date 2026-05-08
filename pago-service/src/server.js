@@ -357,6 +357,6 @@ app.delete("/api/settings/account", async (req, res) => {
 const PORT = process.env.PORT || 3002;
 
 app.listen(PORT, async () => {
-    console.log(`💰 pa-service corriendo en puerto ${PORT}`);
+    console.log(`💰 Pago Service corriendo en puerto ${PORT}`);
     await testDB();
 });
