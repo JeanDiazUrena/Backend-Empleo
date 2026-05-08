@@ -7,11 +7,18 @@ require("dotenv").config();
 
 const app = express();
 
-const allowedOrigins = (process.env.CORS_ORIGINS
-    || "http://localhost:5173,http://127.0.0.1:5173,https://frontendempleo.vercel.app")
+const defaultOrigins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://frontendempleo.vercel.app"
+];
+
+const configuredOrigins = (process.env.CORS_ORIGINS || "")
     .split(",")
     .map((origin) => origin.trim())
     .filter(Boolean);
+
+const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
 
 app.use(cors({
     origin: allowedOrigins,
@@ -24,7 +31,7 @@ const server = http.createServer(app);
 // SOCKET.IO PROXY (Hacia Perfiles Service que es el principal para Chat)
 // ================================
 const socketProxy = createProxyMiddleware({
-    target: "http://127.0.0.1:3010",
+    target: process.env.PERFILES_SERVICE_URL || "http://127.0.0.1:3010",
     changeOrigin: true,
     ws: true,
     secure: false,
@@ -56,11 +63,11 @@ app.use((req, res, next) => {
 // MICROSERVICIOS
 // ================================
 const routes = {
-    "/auth-service": "http://localhost:3000",
-    "/perfiles-service": "http://localhost:3010",
-    "/pagos-service": "http://localhost:3002",
-    "/trabajos-service": "http://localhost:3003",
-    "/notificaciones-service": "http://localhost:3005"
+    "/auth-service": process.env.AUTH_SERVICE_URL || "http://localhost:3000",
+    "/perfiles-service": process.env.PERFILES_SERVICE_URL || "http://localhost:3010",
+    "/pagos-service": process.env.PAGOS_SERVICE_URL || "http://localhost:3002",
+    "/trabajos-service": process.env.TRABAJOS_SERVICE_URL || "http://localhost:3003",
+    "/notificaciones-service": process.env.NOTIFICACIONES_SERVICE_URL || "http://localhost:3005"
 };
 
 for (const [path, target] of Object.entries(routes)) {
