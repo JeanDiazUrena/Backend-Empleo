@@ -16,8 +16,7 @@ const server = http.createServer(app);
 // CONFIGURACIÓN DE SOCKET.IO
 const io = new Server(server, {
     cors: {
-        origin: ["https://servihub-topaz.vercel.app", "http://localhost:4000"],
-        credentials: true,
+        origin: "*",
         methods: ["GET", "POST"]
     }
 });
@@ -34,12 +33,7 @@ io.on("connection", (socket) => {
     });
 });
 
-app.use(cors({
-    origin: ["https://servihub-topaz.vercel.app", "http://localhost:4000"],
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"]
-}));
+app.use(cors());
 app.use(express.json());
 
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
