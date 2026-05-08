@@ -37,8 +37,8 @@ export const initDB = async () => {
         metodo_pago VARCHAR(50),
         estado_pago VARCHAR(50) DEFAULT 'PENDIENTE',
         cotizacion_id INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
@@ -145,6 +145,24 @@ export const initDB = async () => {
         );
     `);
     console.log('✅ Tabla tarjetas_clientes asegurada');
+
+    // MIGRACIONES DE ZONA HORARIA
+    const tablesToMigrate = [
+      ['trabajos', ['created_at', 'updated_at']],
+      ['cotizaciones', ['created_at']],
+      ['acciones_trabajo', ['created_at']],
+      ['billetera_profesional', ['updated_at']],
+      ['movimientos_billetera', ['created_at']],
+      ['confirmaciones', ['created_at']],
+      ['resenas', ['created_at']]
+    ];
+
+    for (const [table, columns] of tablesToMigrate) {
+      for (const col of columns) {
+        await pool.query(`ALTER TABLE ${table} ALTER COLUMN ${col} TYPE TIMESTAMPTZ`).catch(() => {});
+      }
+    }
+
     console.log("✅ Tablas de 'trabajo-service' verificadas/creadas.");
   } catch (err) {
     console.error("❌ Error inicializando tablas de trabajo:", err.message);
