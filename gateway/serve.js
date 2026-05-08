@@ -20,12 +20,21 @@ const configuredOrigins = (process.env.CORS_ORIGINS || "")
     .filter(Boolean);
 
 const allowedOrigins = [...new Set([...defaultOrigins, ...configuredOrigins])];
+const allowedVercelOriginPattern = /^https:\/\/servihub[-\w]*\.vercel\.app$/;
 
-app.use(cors({
-    origin: allowedOrigins,
+const corsOptions = {
+    origin(origin, callback) {
+        if (!origin || allowedOrigins.includes(origin) || allowedVercelOriginPattern.test(origin)) {
+            return callback(null, true);
+        }
+
+        return callback(new Error(`Origen no permitido por CORS: ${origin}`));
+    },
     credentials: true,
     optionsSuccessStatus: 204
-}));
+};
+
+app.use(cors(corsOptions));
 
 const server = http.createServer(app);
 
