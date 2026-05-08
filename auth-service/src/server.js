@@ -35,7 +35,7 @@ io.on("connection", (socket) => {
 });
 
 app.use(cors({
-    origin: ["http://localhost:5173", "http://localhost:4000"],
+    origin: ["https://servihub-topaz.vercel.app", "http://localhost:4000"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
