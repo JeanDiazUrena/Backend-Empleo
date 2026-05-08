@@ -1,0 +1,90 @@
+services:
+  # SERVICIO: AUTH
+  - type: web
+    name: servihub-auth
+    env: node
+    rootDir: BACKEND/auth-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+
+  # SERVICIO: PERFILES
+  - type: web
+    name: servihub-perfil
+    env: node
+    rootDir: BACKEND/perfile-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: TRABAJOS
+  - type: web
+    name: servihub-trabajo
+    env: node
+    rootDir: BACKEND/trabajo-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: PAGOS (Agregado)
+  - type: web
+    name: servihub-pago
+    env: node
+    rootDir: BACKEND/pago-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: NOTIFICACIONES
+  - type: web
+    name: servihub-notificacion
+    env: node
+    rootDir: BACKEND/notificacion-service
+    buildCommand: npm install
+    startCommand: node src/server.js
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+
+  # SERVICIO: GATEWAY (El director de tráfico)
+  - type: web
+    name: servihub-gateway
+    env: node
+    rootDir: BACKEND/gateway
+    buildCommand: npm install
+    startCommand: node serve.js
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: AUTH_SERVICE_URL
+        value: https://servihub-auth.onrender.com
+      - key: PERFILES_SERVICE_URL
+        value: https://servihub-perfil.onrender.com
+      - key: TRABAJOS_SERVICE_URL
+        value: https://servihub-trabajo.onrender.com
+      - key: NOTIFICACIONES_SERVICE_URL
+        value: https://servihub-notificacion.onrender.com
+      - key: PAGOS_SERVICE_URL
+        value: https://servihub-pago.onrender.com
+
+  # FRONTEND (SITIO ESTÁTICO)
+  - type: web
+    name: servihub-frontend
+    env: static
+    rootDir: FRONTEND
+    buildCommand: npm install && npm run build
+    publishDir: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
