@@ -16,6 +16,8 @@ services:
         value: "465"
       - key: SMTP_SECURE
         value: "true"
+      - key: SMTP_FAMILY
+        value: "4"
       - key: SMTP_USER
         sync: false
       - key: SMTP_PASS

@@ -9,8 +9,10 @@ import { Server } from "socket.io";
 import { OAuth2Client } from "google-auth-library";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
+import dns from "dns";
 
 dotenv.config();
+dns.setDefaultResultOrder("ipv4first");
 
 const app = express();
 const server = http.createServer(app);
@@ -92,6 +94,8 @@ const createVerificationCode = () => String(crypto.randomInt(0, 1000000)).padSta
 const getMailTransport = () => {
     const host = process.env.SMTP_HOST || "smtp.gmail.com";
     const port = Number(process.env.SMTP_PORT || 465);
+    const secure = String(process.env.SMTP_SECURE || "true") === "true";
+    const family = Number(process.env.SMTP_FAMILY || 4);
     const user = process.env.SMTP_USER;
     const pass = process.env.SMTP_PASS;
 
@@ -102,7 +106,12 @@ const getMailTransport = () => {
     return nodemailer.createTransport({
         host,
         port,
-        secure: String(process.env.SMTP_SECURE || "true") === "true",
+        secure,
+        family,
+        requireTLS: !secure,
+        connectionTimeout: 60000,
+        greetingTimeout: 30000,
+        socketTimeout: 60000,
         auth: { user, pass }
     });
 };
