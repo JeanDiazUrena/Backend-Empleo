@@ -515,8 +515,9 @@ app.post("/api/solicitudes", verificarToken, upload.single('imagen'), async (req
                     body: JSON.stringify({
                         user_id: profesional_id,
                         title: `Solicitud de ${nombreCliente}`,
-                        message: `${nombreCliente} ha solicitado tus servicios: "${titulo}"`,
-                        type: 'info'
+                        message: `Has recibido una nueva solicitud para "${categoria}".`,
+                        type: 'info',
+                        metadata: { url: '/professional/dashboard' }
                     })
                 });
             } catch (err) { console.error('Error enviando notificacion', err); }

@@ -219,7 +219,8 @@ app.post('/api/trabajos', async (req, res) => {
                     user_id: cliente_id,
                     title: 'Solicitud Aceptada',
                     message: `Un profesional ha aceptado tu solicitud "${titulo || 'Servicio'}". Revisa tus trabajos en curso.`,
-                    type: 'success'
+                    type: 'success',
+                    metadata: { url: '/client/dashboard' }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -340,7 +341,8 @@ app.post('/api/cotizaciones', async (req, res) => {
                     user_id: cliente_id,
                     title: 'Nueva Cotización Recibida',
                     message: `Un profesional te ha enviado una cotización por RD$ ${montoTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`,
-                    type: 'info'
+                    type: 'info',
+                    metadata: { url: '/client/dashboard' }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -574,7 +576,8 @@ app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
                     user_id: cotizacion.profesional_id,
                     title: 'Cotización Aceptada',
                     message: `El cliente ha aceptado la cotización para "${cotizacion.titulo}". El trabajo está en progreso.`,
-                    type: 'success'
+                    type: 'success',
+                    metadata: { url: '/professional/dashboard' }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -663,7 +666,8 @@ app.post('/api/trabajos/:id/confirmar', async (req, res) => {
                     user_id: trabajo.profesional_id,
                     title: 'Pago Liberado',
                     message: `El cliente ha confirmado el trabajo "${trabajo.titulo || 'Servicio'}" y el pago ha sido liberado.`,
-                    type: 'success'
+                    type: 'success',
+                    metadata: { url: '/professional/dashboard' }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -766,9 +770,10 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
                         body: JSON.stringify({
                             user_id: trabajo.profesional_id,
                             title: 'Comprobante de Pago Recibido',
-                            message: `El cliente ha subido un comprobante para el trabajo "${trabajo.titulo || 'Servicio'}". Por favor, verifícalo para finalizar.`,
-                            type: 'info'
-                        })
+                    message: `El cliente ha subido un comprobante para el trabajo "${trabajo.titulo || 'Servicio'}". Por favor, verifícalo para finalizar.`,
+                    type: 'info',
+                    metadata: { url: '/professional/dashboard' }
+                })
                     });
                 } catch (err) { console.error('Error enviando notificacion', err); }
 
@@ -979,7 +984,8 @@ app.put('/api/trabajos/:id/terminar', async (req, res) => {
                     user_id: trabajo.cliente_id,
                     title: 'Trabajo Terminado',
                     message: `El profesional ha marcado el trabajo "${trabajo.titulo || 'Servicio'}" como terminado. Por favor, confirma y libera el pago.`,
-                    type: 'info'
+                    type: 'info',
+                    metadata: { url: '/client/dashboard' }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -1287,7 +1293,8 @@ app.post('/api/trabajos/:id/confirmar-transferencia', async (req, res) => {
                     user_id: trabajo.cliente_id,
                     title: 'Pago Confirmado',
                     message: `El profesional ha confirmado tu pago por transferencia para el trabajo "${trabajo.titulo || 'Servicio'}". Ya puedes ver tu recibo.`,
-                    type: 'success'
+                    type: 'success',
+                    metadata: { url: `/client/receipt/${trabajo_id}` }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }

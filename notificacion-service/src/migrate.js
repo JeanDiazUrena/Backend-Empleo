@@ -37,6 +37,7 @@ const migrate = async () => {
                 title VARCHAR(255) NOT NULL,
                 message TEXT NOT NULL,
                 type VARCHAR(50) DEFAULT 'info',
+                metadata JSONB DEFAULT '{}',
                 is_read BOOLEAN DEFAULT false,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )

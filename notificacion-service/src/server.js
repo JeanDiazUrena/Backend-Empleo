@@ -85,10 +85,10 @@ app.get("/notificaciones/:user_id/unread-count", verificarToken, async (req, res
 // Crear notificación (para que otros servicios la llamen)
 app.post("/notificaciones", async (req, res) => {
     try {
-        const { user_id, title, message, type } = req.body;
+        const { user_id, title, message, type, metadata } = req.body;
         const result = await pool.query(
-            "INSERT INTO notificaciones (user_id, title, message, type) VALUES ($1, $2, $3, $4) RETURNING *",
-            [user_id, title, message, type || 'info']
+            "INSERT INTO notificaciones (user_id, title, message, type, metadata) VALUES ($1, $2, $3, $4, $5) RETURNING *",
+            [user_id, title, message, type || 'info', metadata || {}]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
