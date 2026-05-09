@@ -49,6 +49,24 @@ const initDB = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS email_verification_codes (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email VARCHAR(255) NOT NULL,
+        purpose VARCHAR(50) NOT NULL CHECK (purpose IN ('register', 'password_reset')),
+        code_hash TEXT NOT NULL,
+        attempts INTEGER DEFAULT 0,
+        expires_at TIMESTAMPTZ NOT NULL,
+        consumed_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_email_verification_codes_lookup
+      ON email_verification_codes (email, purpose, created_at DESC)
+    `);
     console.log("✅ Tablas de 'auth-service' verificadas/creadas.");
   } catch (err) {
     console.error("❌ Error inicializando tablas de auth:", err.message);

@@ -7,6 +7,8 @@ import jwt from "jsonwebtoken";
 import http from "http";
 import { Server } from "socket.io";
 import { OAuth2Client } from "google-auth-library";
+import nodemailer from "nodemailer";
+import crypto from "crypto";
 
 dotenv.config();
 
@@ -79,16 +81,196 @@ const registrarSesion = async (req, userId) => {
     }
 };
 
+const CODE_TTL_MINUTES = 10;
+const MAX_CODE_ATTEMPTS = 5;
+
+const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
+const isGmailEmail = (email) => /^[a-z0-9._%+-]+@(gmail\.com|googlemail\.com)$/i.test(email);
+
+const createVerificationCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, "0");
+
+const getMailTransport = () => {
+    const host = process.env.SMTP_HOST || "smtp.gmail.com";
+    const port = Number(process.env.SMTP_PORT || 465);
+    const user = process.env.SMTP_USER;
+    const pass = process.env.SMTP_PASS;
+
+    if (!user || !pass) {
+        throw new Error("SMTP_NOT_CONFIGURED");
+    }
+
+    return nodemailer.createTransport({
+        host,
+        port,
+        secure: String(process.env.SMTP_SECURE || "true") === "true",
+        auth: { user, pass }
+    });
+};
+
+const getMailSubject = (purpose) =>
+    purpose === "password_reset"
+        ? "Codigo para recuperar tu cuenta ServiHub"
+        : "Verifica tu correo en ServiHub";
+
+const buildEmailTemplate = ({ code, purpose, nombre }) => {
+    const title = purpose === "password_reset" ? "Recupera tu acceso" : "Confirma tu correo";
+    const intro = purpose === "password_reset"
+        ? "Recibimos una solicitud para cambiar tu contrasena. Usa este codigo para continuar."
+        : "Para crear tu cuenta en ServiHub, confirma que este Gmail te pertenece con el siguiente codigo.";
+
+    return `
+      <div style="margin:0;padding:0;background:#f4f7fb;font-family:Inter,Segoe UI,Arial,sans-serif;color:#122033;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f7fb;padding:32px 12px;">
+          <tr>
+            <td align="center">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:22px;overflow:hidden;border:1px solid #e3ebf5;box-shadow:0 18px 45px rgba(15,35,52,.12);">
+                <tr>
+                  <td style="background:#0b4c6f;padding:28px 32px;color:white;">
+                    <div style="font-size:24px;font-weight:800;letter-spacing:.2px;">ServiHub</div>
+                    <div style="font-size:14px;opacity:.86;margin-top:6px;">Servicios confiables, cuentas protegidas.</div>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:34px 32px 28px;">
+                    <h1 style="margin:0 0 12px;font-size:26px;line-height:1.2;color:#0f172a;">${title}</h1>
+                    <p style="margin:0 0 22px;font-size:15px;line-height:1.65;color:#526173;">Hola${nombre ? `, ${nombre}` : ""}. ${intro}</p>
+                    <div style="background:#f8fbff;border:1px solid #dbe8f4;border-radius:18px;padding:22px;text-align:center;margin:20px 0;">
+                      <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.12em;color:#64748b;margin-bottom:10px;">Tu codigo</div>
+                      <div style="font-size:38px;letter-spacing:10px;font-weight:900;color:#0b4c6f;">${code}</div>
+                    </div>
+                    <p style="margin:20px 0 0;font-size:14px;line-height:1.6;color:#64748b;">Este codigo vence en ${CODE_TTL_MINUTES} minutos. Si no fuiste tu, puedes ignorar este correo.</p>
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:18px 32px;background:#f8fafc;border-top:1px solid #edf2f7;color:#8a98aa;font-size:12px;line-height:1.5;">
+                    ServiHub nunca te pedira tu contrasena por correo.
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </div>
+    `;
+};
+
+const sendCodeEmail = async ({ email, code, purpose, nombre }) => {
+    const transporter = getMailTransport();
+    const from = process.env.MAIL_FROM || `"ServiHub" <${process.env.SMTP_USER}>`;
+
+    await transporter.sendMail({
+        from,
+        to: email,
+        subject: getMailSubject(purpose),
+        text: `Tu codigo de ServiHub es ${code}. Vence en ${CODE_TTL_MINUTES} minutos.`,
+        html: buildEmailTemplate({ code, purpose, nombre })
+    });
+};
+
+const issueEmailCode = async ({ email, purpose, nombre }) => {
+    const code = createVerificationCode();
+    const codeHash = await bcrypt.hash(code, 10);
+    const expiresAt = new Date(Date.now() + CODE_TTL_MINUTES * 60 * 1000);
+
+    await pool.query(
+        `UPDATE email_verification_codes
+         SET consumed_at = NOW()
+         WHERE email = $1 AND purpose = $2 AND consumed_at IS NULL`,
+        [email, purpose]
+    );
+
+    await pool.query(
+        `INSERT INTO email_verification_codes (email, purpose, code_hash, expires_at)
+         VALUES ($1, $2, $3, $4)`,
+        [email, purpose, codeHash, expiresAt]
+    );
+
+    await sendCodeEmail({ email, code, purpose, nombre });
+};
+
+const verifyEmailCode = async ({ email, purpose, code }) => {
+    const cleanCode = String(code || "").trim();
+    if (!/^\d{6}$/.test(cleanCode)) {
+        return { ok: false, message: "Ingresa el codigo de 6 digitos." };
+    }
+
+    const result = await pool.query(
+        `SELECT *
+         FROM email_verification_codes
+         WHERE email = $1 AND purpose = $2 AND consumed_at IS NULL
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [email, purpose]
+    );
+
+    if (result.rows.length === 0) {
+        return { ok: false, message: "Primero solicita un codigo de verificacion." };
+    }
+
+    const record = result.rows[0];
+    if (new Date(record.expires_at).getTime() < Date.now()) {
+        await pool.query("UPDATE email_verification_codes SET consumed_at = NOW() WHERE id = $1", [record.id]);
+        return { ok: false, message: "El codigo caduco. Solicita uno nuevo." };
+    }
+
+    if (Number(record.attempts || 0) >= MAX_CODE_ATTEMPTS) {
+        await pool.query("UPDATE email_verification_codes SET consumed_at = NOW() WHERE id = $1", [record.id]);
+        return { ok: false, message: "Demasiados intentos. Solicita un codigo nuevo." };
+    }
+
+    const valid = await bcrypt.compare(cleanCode, record.code_hash);
+    if (!valid) {
+        await pool.query("UPDATE email_verification_codes SET attempts = attempts + 1 WHERE id = $1", [record.id]);
+        return { ok: false, message: "Codigo incorrecto." };
+    }
+
+    await pool.query("UPDATE email_verification_codes SET consumed_at = NOW() WHERE id = $1", [record.id]);
+    return { ok: true };
+};
+
+const handleMailError = (error, res) => {
+    console.error("Email error:", error);
+    if (error.message === "SMTP_NOT_CONFIGURED") {
+        return res.status(503).json({
+            message: "El envio de correos no esta configurado. Configura SMTP_USER y SMTP_PASS en Render."
+        });
+    }
+    return res.status(500).json({ message: "No se pudo enviar el correo. Intenta mas tarde." });
+};
+
 // --- REGISTRAR USUARIO ---
+app.post("/api/register/request-code", async (req, res) => {
+    const email = normalizeEmail(req.body.email);
+    const nombre = String(req.body.nombre || "").trim();
+
+    if (!email) return res.status(400).json({ message: "Ingresa tu correo." });
+    if (!isGmailEmail(email)) return res.status(400).json({ message: "Debes usar una cuenta de Gmail valida." });
+
+    try {
+        const existe = await pool.query("SELECT id FROM usuarios WHERE email = $1", [email]);
+        if (existe.rows.length > 0) return res.status(409).json({ message: "Email ya registrado" });
+
+        await issueEmailCode({ email, purpose: "register", nombre });
+        res.json({ message: "Te enviamos un codigo a tu Gmail. Revisa tu bandeja de entrada." });
+    } catch (error) {
+        return handleMailError(error, res);
+    }
+});
+
 app.post("/api/register", async (req, res) => {
-    const { nombre, email, password, rol } = req.body;
+    const { nombre, password, rol, verification_code } = req.body;
+    const email = normalizeEmail(req.body.email);
     if (!nombre || !email || !password || !rol) return res.status(400).json({ message: "Datos incompletos" });
+    if (!isGmailEmail(email)) return res.status(400).json({ message: "Debes usar una cuenta de Gmail valida." });
     if (password.length < 8) return res.status(400).json({ message: "La contraseña debe tener al menos 8 caracteres" });
     if (!["cliente", "profesional"].includes(rol)) return res.status(400).json({ message: "Rol inválido" });
 
     try {
         const existe = await pool.query("SELECT id FROM usuarios WHERE email = $1", [email]);
         if (existe.rows.length > 0) return res.status(409).json({ message: "Email ya registrado" });
+
+        const codeCheck = await verifyEmailCode({ email, purpose: "register", code: verification_code });
+        if (!codeCheck.ok) return res.status(400).json({ message: codeCheck.message });
 
         const hashedPassword = await bcrypt.hash(password, 10);
         const newUser = await pool.query(
@@ -98,6 +280,47 @@ app.post("/api/register", async (req, res) => {
         res.status(201).json({ message: "Usuario creado correctamente", user: newUser.rows[0] });
     } catch (error) {
         console.error("Register error:", error);
+        res.status(500).json({ message: "Error del servidor" });
+    }
+});
+
+// --- RECUPERACION DE CONTRASENA ---
+app.post("/api/password/forgot-code", async (req, res) => {
+    const email = normalizeEmail(req.body.email);
+    if (!email) return res.status(400).json({ message: "Ingresa tu correo." });
+    if (!isGmailEmail(email)) return res.status(400).json({ message: "Debes usar una cuenta de Gmail valida." });
+
+    try {
+        const result = await pool.query("SELECT nombre FROM usuarios WHERE email = $1 AND activo = true", [email]);
+        if (result.rows.length === 0) return res.status(404).json({ message: "No encontramos una cuenta activa con ese Gmail." });
+
+        await issueEmailCode({ email, purpose: "password_reset", nombre: result.rows[0].nombre });
+        res.json({ message: "Te enviamos un codigo para recuperar tu contrasena." });
+    } catch (error) {
+        return handleMailError(error, res);
+    }
+});
+
+app.post("/api/password/reset", async (req, res) => {
+    const email = normalizeEmail(req.body.email);
+    const { code, password } = req.body;
+
+    if (!email || !code || !password) return res.status(400).json({ message: "Datos incompletos" });
+    if (!isGmailEmail(email)) return res.status(400).json({ message: "Debes usar una cuenta de Gmail valida." });
+    if (password.length < 8) return res.status(400).json({ message: "La contraseña debe tener al menos 8 caracteres" });
+
+    try {
+        const existe = await pool.query("SELECT id FROM usuarios WHERE email = $1 AND activo = true", [email]);
+        if (existe.rows.length === 0) return res.status(404).json({ message: "No encontramos una cuenta activa con ese Gmail." });
+
+        const codeCheck = await verifyEmailCode({ email, purpose: "password_reset", code });
+        if (!codeCheck.ok) return res.status(400).json({ message: codeCheck.message });
+
+        const hashedPassword = await bcrypt.hash(password, 10);
+        await pool.query("UPDATE usuarios SET password = $1, updated_at = NOW() WHERE email = $2", [hashedPassword, email]);
+        res.json({ message: "Contrasena actualizada correctamente." });
+    } catch (error) {
+        console.error("Password reset error:", error);
         res.status(500).json({ message: "Error del servidor" });
     }
 });
