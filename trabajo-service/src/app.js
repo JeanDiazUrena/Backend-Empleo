@@ -36,6 +36,7 @@ export const initDB = async () => {
         horario TEXT,
         presupuesto TEXT,
         cliente_nombre TEXT,
+        profesional_nombre TEXT,
         categoria TEXT,
         monto DECIMAL(12,2),
         monto_acordado NUMERIC(12, 2),
@@ -48,6 +49,7 @@ export const initDB = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+        await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS profesional_nombre TEXT`);
 
         // 2. Cotizaciones
         await pool.query(`

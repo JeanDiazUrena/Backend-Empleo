@@ -35,6 +35,7 @@ export const initDB = async () => {
         horario VARCHAR(255),
         presupuesto VARCHAR(255),
         cliente_nombre VARCHAR(255),
+        profesional_nombre VARCHAR(255),
         categoria VARCHAR(255),
         monto_acordado DECIMAL(12,2),
         monto_comision DECIMAL(12,2),
@@ -68,6 +69,7 @@ export const initDB = async () => {
     await pool.query(`ALTER TABLE cotizaciones ADD COLUMN IF NOT EXISTS trabajo_id INTEGER`).catch(() => {});
 
     // Safe migration: comprobante fields for transfer payment confirmation flow
+    await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS profesional_nombre VARCHAR(255)`).catch(() => {});
     await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_url TEXT`).catch(() => {});
     await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS comprobante_estado VARCHAR(50) DEFAULT 'NINGUNO'`).catch(() => {});
     await pool.query(`

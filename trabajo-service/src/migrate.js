@@ -43,6 +43,7 @@ const migrate = async () => {
         horario VARCHAR(255),
         presupuesto VARCHAR(255),
         cliente_nombre VARCHAR(255),
+        profesional_nombre VARCHAR(255),
         categoria VARCHAR(255),
         monto_acordado DECIMAL(12,2),
         monto_comision DECIMAL(12,2),
@@ -53,6 +54,7 @@ const migrate = async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    await pool.query(`ALTER TABLE trabajos ADD COLUMN IF NOT EXISTS profesional_nombre VARCHAR(255)`);
 
     // 2. Cotizaciones
     await pool.query(`
