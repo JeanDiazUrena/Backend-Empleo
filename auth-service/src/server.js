@@ -88,6 +88,33 @@ const MAX_CODE_ATTEMPTS = 5;
 
 const normalizeEmail = (email) => String(email || "").trim().toLowerCase();
 const isGmailEmail = (email) => /^[a-z0-9._%+-]+@(gmail\.com|googlemail\.com)$/i.test(email);
+const passwordRequirements = [
+    {
+        message: "Falta llegar a 8 caracteres.",
+        test: (value) => String(value || "").length >= 8
+    },
+    {
+        message: "Falta una mayúscula.",
+        test: (value) => /[A-Z]/.test(String(value || ""))
+    },
+    {
+        message: "Falta una minúscula.",
+        test: (value) => /[a-z]/.test(String(value || ""))
+    },
+    {
+        message: "Falta un número.",
+        test: (value) => /[0-9]/.test(String(value || ""))
+    },
+    {
+        message: "Falta un símbolo.",
+        test: (value) => /[^A-Za-z0-9]/.test(String(value || ""))
+    }
+];
+
+const getPasswordError = (password) => {
+    const missing = passwordRequirements.find((requirement) => !requirement.test(password));
+    return missing?.message || "";
+};
 
 const createVerificationCode = () => String(crypto.randomInt(0, 1000000)).padStart(6, "0");
 
@@ -432,7 +459,8 @@ app.post("/api/register", async (req, res) => {
     const email = normalizeEmail(req.body.email);
     if (!nombre || !email || !password || !rol) return res.status(400).json({ message: "Datos incompletos" });
     if (!isGmailEmail(email)) return res.status(400).json({ message: "Debes usar una cuenta de Gmail valida." });
-    if (password.length < 8) return res.status(400).json({ message: "La contraseña debe tener al menos 8 caracteres" });
+    const passwordError = getPasswordError(password);
+    if (passwordError) return res.status(400).json({ message: passwordError });
     if (!["cliente", "profesional"].includes(rol)) return res.status(400).json({ message: "Rol inválido" });
 
     try {
@@ -477,7 +505,8 @@ app.post("/api/password/reset", async (req, res) => {
 
     if (!email || !code || !password) return res.status(400).json({ message: "Datos incompletos" });
     if (!isGmailEmail(email)) return res.status(400).json({ message: "Debes usar una cuenta de Gmail valida." });
-    if (password.length < 8) return res.status(400).json({ message: "La contraseña debe tener al menos 8 caracteres" });
+    const passwordError = getPasswordError(password);
+    if (passwordError) return res.status(400).json({ message: passwordError });
 
     try {
         const existe = await pool.query("SELECT id FROM usuarios WHERE email = $1 AND activo = true", [email]);
@@ -570,6 +599,46 @@ app.get("/api/users/me", verificarToken, async (req, res) => {
         if (result.rows.length === 0) return res.status(404).json({ message: "Usuario no encontrado" });
         res.json(result.rows[0]);
     } catch (error) { res.status(500).json({ message: "Error obteniendo datos" }); }
+});
+
+// --- CAMBIAR CONTRASENA ---
+app.post("/api/users/change-password", verificarToken, async (req, res) => {
+    const { oldPassword, newPassword } = req.body;
+
+    if (!oldPassword || !newPassword) {
+        return res.status(400).json({ message: "Completa la contraseña actual y la nueva contraseña." });
+    }
+
+    const passwordError = getPasswordError(newPassword);
+    if (passwordError) return res.status(400).json({ message: passwordError });
+    if (oldPassword === newPassword) {
+        return res.status(400).json({ message: "La nueva contraseña debe ser diferente a la actual." });
+    }
+
+    try {
+        const result = await pool.query(
+            "SELECT id, password FROM usuarios WHERE id = $1 AND activo = true",
+            [req.user.id]
+        );
+        if (result.rows.length === 0) return res.status(404).json({ message: "Usuario no encontrado" });
+
+        const user = result.rows[0];
+        const validPassword = await bcrypt.compare(oldPassword, user.password);
+        if (!validPassword) {
+            return res.status(400).json({ message: "La contraseña actual no es correcta." });
+        }
+
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        await pool.query(
+            "UPDATE usuarios SET password = $1, updated_at = NOW() WHERE id = $2",
+            [hashedPassword, user.id]
+        );
+
+        res.json({ message: "Contraseña actualizada correctamente." });
+    } catch (error) {
+        console.error("Change password error:", error);
+        res.status(500).json({ message: "Error al actualizar contraseña" });
+    }
 });
 
 // --- SESIONES DEL USUARIO ---
