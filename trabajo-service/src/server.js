@@ -77,6 +77,7 @@ const parseMoney = (value) => {
 
 const CLIENT_PROFILE_INCOMPLETE_MESSAGE = "Debes completar tu perfil antes de hacer una solicitud.";
 const PERFILES_SERVICE_URL = process.env.PERFILES_SERVICE_URL || "http://localhost:3001";
+const NOTIFICACIONES_SERVICE_URL = process.env.NOTIFICACIONES_SERVICE_URL || "http://localhost:3005";
 
 const isClientProfileComplete = (cliente) => {
     if (!cliente) return false;
@@ -212,7 +213,7 @@ app.post('/api/trabajos', async (req, res) => {
 
         // Notify the client
         try {
-            await fetch('http://localhost:3005/notificaciones', {
+            await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -220,7 +221,12 @@ app.post('/api/trabajos', async (req, res) => {
                     title: 'Solicitud Aceptada',
                     message: `Un profesional ha aceptado tu solicitud "${titulo || 'Servicio'}". Revisa tus trabajos en curso.`,
                     type: 'success',
-                    metadata: { url: '/client/dashboard' }
+                    metadata: {
+                        action: 'open_client_dashboard',
+                        trabajo_id: result.rows[0].id,
+                        solicitud_id: solicitud_id || null,
+                        url: '/client/dashboard'
+                    }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -291,6 +297,28 @@ app.get('/api/cotizaciones/profesional/:profesionalId', async (req, res) => {
 });
 
 // =========================================================================
+// RUTA: OBTENER COTIZACION POR ID
+// =========================================================================
+app.get('/api/cotizaciones/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const result = await pool.query(
+            `SELECT * FROM cotizaciones WHERE id = $1`,
+            [id]
+        );
+
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Cotizacion no encontrada' });
+        }
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error("Error obteniendo cotizacion:", error);
+        res.status(500).json({ error: "Error obteniendo cotizacion" });
+    }
+});
+
+// =========================================================================
 // RUTA: CREAR COTIZACION DESDE DASHBOARD / CHAT
 // =========================================================================
 app.post('/api/cotizaciones', async (req, res) => {
@@ -334,7 +362,7 @@ app.post('/api/cotizaciones', async (req, res) => {
         );
 
         try {
-            await fetch('http://localhost:3005/notificaciones', {
+            await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -342,7 +370,13 @@ app.post('/api/cotizaciones', async (req, res) => {
                     title: 'Nueva Cotización Recibida',
                     message: `Un profesional te ha enviado una cotización por RD$ ${montoTotal.toLocaleString('es-DO', { minimumFractionDigits: 2 })}.`,
                     type: 'info',
-                    metadata: { url: '/client/dashboard' }
+                    metadata: {
+                        action: 'review_quote',
+                        cotizacion_id: result.rows[0].id,
+                        trabajo_id: result.rows[0].trabajo_id || null,
+                        solicitud_id: result.rows[0].solicitud_id || null,
+                        url: '/client/dashboard'
+                    }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -441,14 +475,21 @@ app.put('/api/cotizaciones/:id', async (req, res) => {
 
         // Notificar al cliente que la cotización fue actualizada
         try {
-            await fetch('http://localhost:3005/notificaciones', {
+            await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     user_id: cotizacion.cliente_id,
                     title: 'Cotización Actualizada',
                     message: `El profesional ha actualizado la cotización para "${cotizacion.titulo}". Revisa los nuevos detalles.`,
-                    type: 'info'
+                    type: 'info',
+                    metadata: {
+                        action: 'review_quote',
+                        cotizacion_id: cotizacion.id,
+                        trabajo_id: cotizacion.trabajo_id || null,
+                        solicitud_id: cotizacion.solicitud_id || null,
+                        url: '/client/dashboard'
+                    }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -569,7 +610,7 @@ app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
 
         // Notify professional
         try {
-            await fetch('http://localhost:3005/notificaciones', {
+            await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -577,7 +618,12 @@ app.put('/api/cotizaciones/:id/aceptar', async (req, res) => {
                     title: 'Cotización Aceptada',
                     message: `El cliente ha aceptado la cotización para "${cotizacion.titulo}". El trabajo está en progreso.`,
                     type: 'success',
-                    metadata: { url: '/professional/dashboard' }
+                    metadata: {
+                        action: 'open_professional_job',
+                        cotizacion_id: cotizacion.id,
+                        trabajo_id: trabajo.id,
+                        url: '/professional/dashboard'
+                    }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -659,7 +705,7 @@ app.post('/api/trabajos/:id/confirmar', async (req, res) => {
 
         // Notify professional
         try {
-            await fetch('http://localhost:3005/notificaciones', {
+            await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -667,7 +713,11 @@ app.post('/api/trabajos/:id/confirmar', async (req, res) => {
                     title: 'Pago Liberado',
                     message: `El cliente ha confirmado el trabajo "${trabajo.titulo || 'Servicio'}" y el pago ha sido liberado.`,
                     type: 'success',
-                    metadata: { url: '/professional/dashboard' }
+                    metadata: {
+                        action: 'open_professional_receipt',
+                        trabajo_id: trabajoId,
+                        url: `/professional/receipt/${trabajoId}`
+                    }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -703,7 +753,7 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
 
         // 2. OBTENER DATOS (JOIN trabajos y cotizaciones)
         const queryJob = `
-            SELECT t.id, t.profesional_id, t.cliente_id, t.solicitud_id, t.estado,
+            SELECT t.id, t.profesional_id, t.cliente_id, t.solicitud_id, t.estado, t.titulo,
                    t.metodo_pago, t.monto_acordado, t.presupuesto, t.estado_pago
             FROM trabajos t
             WHERE t.id = $1
@@ -764,16 +814,20 @@ app.post('/api/trabajos/:id/finalizar', async (req, res) => {
 
                 // Notificar al profesional que debe revisar el comprobante
                 try {
-                    await fetch('http://localhost:3005/notificaciones', {
+                    await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
                             user_id: trabajo.profesional_id,
                             title: 'Comprobante de Pago Recibido',
-                    message: `El cliente ha subido un comprobante para el trabajo "${trabajo.titulo || 'Servicio'}". Por favor, verifícalo para finalizar.`,
-                    type: 'info',
-                    metadata: { url: '/professional/dashboard' }
-                })
+                            message: `El cliente ha subido un comprobante para el trabajo "${trabajo.titulo || 'Servicio'}". Por favor, verifícalo para finalizar.`,
+                            type: 'info',
+                            metadata: {
+                                action: 'confirm_transfer',
+                                trabajo_id: trabajo_id,
+                                url: '/professional/dashboard'
+                            }
+                        })
                     });
                 } catch (err) { console.error('Error enviando notificacion', err); }
 
@@ -977,7 +1031,7 @@ app.put('/api/trabajos/:id/terminar', async (req, res) => {
 
         const trabajo = buscarTrabajo.rows[0];
         try {
-            await fetch('http://localhost:3005/notificaciones', {
+            await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -985,7 +1039,11 @@ app.put('/api/trabajos/:id/terminar', async (req, res) => {
                     title: 'Trabajo Terminado',
                     message: `El profesional ha marcado el trabajo "${trabajo.titulo || 'Servicio'}" como terminado. Por favor, confirma y libera el pago.`,
                     type: 'info',
-                    metadata: { url: '/client/dashboard' }
+                    metadata: {
+                        action: 'confirm_job',
+                        trabajo_id: trabajoId,
+                        url: '/client/dashboard'
+                    }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
@@ -1286,7 +1344,7 @@ app.post('/api/trabajos/:id/confirmar-transferencia', async (req, res) => {
 
         // Notificar al cliente
         try {
-            await fetch('http://localhost:3005/notificaciones', {
+            await fetch(`${NOTIFICACIONES_SERVICE_URL}/notificaciones`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -1294,7 +1352,11 @@ app.post('/api/trabajos/:id/confirmar-transferencia', async (req, res) => {
                     title: 'Pago Confirmado',
                     message: `El profesional ha confirmado tu pago por transferencia para el trabajo "${trabajo.titulo || 'Servicio'}". Ya puedes ver tu recibo.`,
                     type: 'success',
-                    metadata: { url: `/client/receipt/${trabajo_id}` }
+                    metadata: {
+                        action: 'view_client_receipt',
+                        trabajo_id: trabajo_id,
+                        url: `/client/receipt/${trabajo_id}`
+                    }
                 })
             });
         } catch (err) { console.error('Error enviando notificacion', err); }

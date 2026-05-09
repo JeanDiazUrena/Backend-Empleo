@@ -36,6 +36,10 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false
+      - key: PERFILES_SERVICE_URL
+        value: https://servihub-perfil.onrender.com
+      - key: NOTIFICACIONES_SERVICE_URL
+        value: https://servihub-notificacion.onrender.com
 
   # SERVICIO: PAGOS
   - type: web
