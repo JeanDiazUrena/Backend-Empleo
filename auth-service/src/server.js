@@ -121,6 +121,8 @@ const getMailSubject = (purpose) =>
         ? "Codigo para recuperar tu cuenta ServiHub"
         : "Verifica tu correo en ServiHub";
 
+const getMailFrom = () => process.env.MAIL_FROM || `"ServiHub" <${process.env.SMTP_USER || "no-reply@servihub.com"}>`;
+
 const buildEmailTemplate = ({ code, purpose, nombre }) => {
     const title = purpose === "password_reset" ? "Recupera tu acceso" : "Confirma tu correo";
     const intro = purpose === "password_reset"
@@ -163,17 +165,52 @@ const buildEmailTemplate = ({ code, purpose, nombre }) => {
     `;
 };
 
-const sendCodeEmail = async ({ email, code, purpose, nombre }) => {
+const sendCodeEmailWithResend = async ({ email, code, purpose, nombre }) => {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) throw new Error("RESEND_NOT_CONFIGURED");
+
+    const response = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+            from: getMailFrom(),
+            to: [email],
+            subject: getMailSubject(purpose),
+            text: `Tu codigo de ServiHub es ${code}. Vence en ${CODE_TTL_MINUTES} minutos.`,
+            html: buildEmailTemplate({ code, purpose, nombre })
+        })
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text().catch(() => "");
+        const error = new Error("RESEND_SEND_FAILED");
+        error.status = response.status;
+        error.body = errorBody;
+        throw error;
+    }
+};
+
+const sendCodeEmailWithSmtp = async ({ email, code, purpose, nombre }) => {
     const transporter = getMailTransport();
-    const from = process.env.MAIL_FROM || `"ServiHub" <${process.env.SMTP_USER}>`;
 
     await transporter.sendMail({
-        from,
+        from: getMailFrom(),
         to: email,
         subject: getMailSubject(purpose),
         text: `Tu codigo de ServiHub es ${code}. Vence en ${CODE_TTL_MINUTES} minutos.`,
         html: buildEmailTemplate({ code, purpose, nombre })
     });
+};
+
+const sendCodeEmail = async ({ email, code, purpose, nombre }) => {
+    if (process.env.RESEND_API_KEY) {
+        return sendCodeEmailWithResend({ email, code, purpose, nombre });
+    }
+
+    return sendCodeEmailWithSmtp({ email, code, purpose, nombre });
 };
 
 const issueEmailCode = async ({ email, purpose, nombre }) => {
@@ -239,9 +276,25 @@ const verifyEmailCode = async ({ email, purpose, code }) => {
 
 const handleMailError = (error, res) => {
     console.error("Email error:", error);
+    if (error.message === "RESEND_NOT_CONFIGURED") {
+        return res.status(503).json({
+            message: "El envio de correos por API no esta configurado. Configura RESEND_API_KEY en Render."
+        });
+    }
+    if (error.message === "RESEND_SEND_FAILED") {
+        console.error("Resend response:", error.status, error.body);
+        return res.status(502).json({
+            message: "El proveedor de correo rechazo el envio. Revisa RESEND_API_KEY y MAIL_FROM."
+        });
+    }
     if (error.message === "SMTP_NOT_CONFIGURED") {
         return res.status(503).json({
             message: "El envio de correos no esta configurado. Configura SMTP_USER y SMTP_PASS en Render."
+        });
+    }
+    if (error.code === "ETIMEDOUT" || error.code === "ESOCKET") {
+        return res.status(503).json({
+            message: "Render no pudo conectar con SMTP. Configura RESEND_API_KEY para enviar correos por API."
         });
     }
     return res.status(500).json({ message: "No se pudo enviar el correo. Intenta mas tarde." });
