@@ -122,6 +122,7 @@ const getMailSubject = (purpose) =>
         : "Verifica tu correo en ServiHub";
 
 const getMailFrom = () => process.env.MAIL_FROM || `"ServiHub" <${process.env.SMTP_USER || "no-reply@servihub.com"}>`;
+const getGmailSender = () => process.env.GMAIL_SENDER || process.env.SMTP_USER;
 
 const buildEmailTemplate = ({ code, purpose, nombre }) => {
     const title = purpose === "password_reset" ? "Recupera tu acceso" : "Confirma tu correo";
@@ -165,6 +166,98 @@ const buildEmailTemplate = ({ code, purpose, nombre }) => {
     `;
 };
 
+const toBase64Url = (value) =>
+    Buffer.from(value)
+        .toString("base64")
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/g, "");
+
+const buildMimeMessage = ({ email, code, purpose, nombre }) => {
+    const sender = getGmailSender();
+    const from = process.env.MAIL_FROM || `ServiHub <${sender}>`;
+    const subject = getMailSubject(purpose);
+    const text = `Tu codigo de ServiHub es ${code}. Vence en ${CODE_TTL_MINUTES} minutos.`;
+    const html = buildEmailTemplate({ code, purpose, nombre });
+    const boundary = `servihub_${crypto.randomBytes(12).toString("hex")}`;
+
+    return [
+        `From: ${from}`,
+        `To: ${email}`,
+        `Subject: ${subject}`,
+        "MIME-Version: 1.0",
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        "",
+        `--${boundary}`,
+        "Content-Type: text/plain; charset=UTF-8",
+        "Content-Transfer-Encoding: 7bit",
+        "",
+        text,
+        "",
+        `--${boundary}`,
+        "Content-Type: text/html; charset=UTF-8",
+        "Content-Transfer-Encoding: 7bit",
+        "",
+        html,
+        "",
+        `--${boundary}--`
+    ].join("\r\n");
+};
+
+const getGmailAccessToken = async () => {
+    const clientId = process.env.GMAIL_CLIENT_ID;
+    const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+    const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+
+    if (!clientId || !clientSecret || !refreshToken || !getGmailSender()) {
+        throw new Error("GMAIL_API_NOT_CONFIGURED");
+    }
+
+    const response = await fetch("https://oauth2.googleapis.com/token", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+            client_id: clientId,
+            client_secret: clientSecret,
+            refresh_token: refreshToken,
+            grant_type: "refresh_token"
+        })
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text().catch(() => "");
+        const error = new Error("GMAIL_TOKEN_FAILED");
+        error.status = response.status;
+        error.body = errorBody;
+        throw error;
+    }
+
+    const data = await response.json();
+    return data.access_token;
+};
+
+const sendCodeEmailWithGmailApi = async ({ email, code, purpose, nombre }) => {
+    const accessToken = await getGmailAccessToken();
+    const raw = toBase64Url(buildMimeMessage({ email, code, purpose, nombre }));
+
+    const response = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages/send", {
+        method: "POST",
+        headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ raw })
+    });
+
+    if (!response.ok) {
+        const errorBody = await response.text().catch(() => "");
+        const error = new Error("GMAIL_SEND_FAILED");
+        error.status = response.status;
+        error.body = errorBody;
+        throw error;
+    }
+};
+
 const sendCodeEmailWithResend = async ({ email, code, purpose, nombre }) => {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) throw new Error("RESEND_NOT_CONFIGURED");
@@ -206,6 +299,10 @@ const sendCodeEmailWithSmtp = async ({ email, code, purpose, nombre }) => {
 };
 
 const sendCodeEmail = async ({ email, code, purpose, nombre }) => {
+    if (process.env.GMAIL_REFRESH_TOKEN) {
+        return sendCodeEmailWithGmailApi({ email, code, purpose, nombre });
+    }
+
     if (process.env.RESEND_API_KEY) {
         return sendCodeEmailWithResend({ email, code, purpose, nombre });
     }
@@ -276,6 +373,17 @@ const verifyEmailCode = async ({ email, purpose, code }) => {
 
 const handleMailError = (error, res) => {
     console.error("Email error:", error);
+    if (error.message === "GMAIL_API_NOT_CONFIGURED") {
+        return res.status(503).json({
+            message: "El envio por Gmail API no esta configurado. Configura GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN y GMAIL_SENDER en Render."
+        });
+    }
+    if (error.message === "GMAIL_TOKEN_FAILED" || error.message === "GMAIL_SEND_FAILED") {
+        console.error("Gmail API response:", error.status, error.body);
+        return res.status(502).json({
+            message: "Gmail API rechazo el envio. Revisa credenciales, scope gmail.send y Gmail API habilitada."
+        });
+    }
     if (error.message === "RESEND_NOT_CONFIGURED") {
         return res.status(503).json({
             message: "El envio de correos por API no esta configurado. Configura RESEND_API_KEY en Render."
