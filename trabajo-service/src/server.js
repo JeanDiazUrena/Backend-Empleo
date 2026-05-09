@@ -78,19 +78,47 @@ const parseMoney = (value) => {
 const CLIENT_PROFILE_INCOMPLETE_MESSAGE = "Debes completar tu perfil antes de hacer una solicitud.";
 const PERFILES_SERVICE_URL = process.env.PERFILES_SERVICE_URL || "http://localhost:3001";
 const NOTIFICACIONES_SERVICE_URL = process.env.NOTIFICACIONES_SERVICE_URL || "http://localhost:3005";
-const trabajoParticipantFields = `
-    t.*,
-    COALESCE(NULLIF(t.cliente_nombre, ''), NULLIF(c.nombre, ''), 'Cliente') AS cliente_nombre,
-    COALESCE(NULLIF(t.profesional_nombre, ''), NULLIF(p.nombre, ''), 'Profesional') AS profesional_nombre,
-    c.avatar AS cliente_avatar,
-    p.avatar_url AS profesional_avatar
-`;
-const trabajoParticipantJoins = `
-    FROM trabajos t
-    LEFT JOIN clientes c ON c.usuario_id::text = t.cliente_id::text
-    LEFT JOIN profesionales p ON p.usuario_id::text = t.profesional_id::text OR p.id::text = t.profesional_id::text
-`;
-const trabajoParticipantSelect = `SELECT ${trabajoParticipantFields} ${trabajoParticipantJoins}`;
+
+const fetchPerfilJson = async (path) => {
+    const response = await fetch(`${PERFILES_SERVICE_URL}${path}`);
+    if (!response.ok) return null;
+    return response.json();
+};
+
+const enrichTrabajoParticipants = async (trabajo) => {
+    if (!trabajo) return trabajo;
+    const enriched = { ...trabajo };
+
+    try {
+        if (!enriched.cliente_nombre || !enriched.cliente_avatar) {
+            const cliente = await fetchPerfilJson(`/api/clientes/${trabajo.cliente_id}`);
+            if (cliente) {
+                enriched.cliente_nombre = enriched.cliente_nombre || cliente.nombre || 'Cliente';
+                enriched.cliente_avatar = enriched.cliente_avatar || cliente.avatar || '';
+            }
+        }
+    } catch (error) {
+        console.error('No se pudo enriquecer cliente del trabajo:', error.message);
+    }
+
+    try {
+        if (!enriched.profesional_nombre || !enriched.profesional_avatar) {
+            const profesional = await fetchPerfilJson(`/api/profesionales/${trabajo.profesional_id}`);
+            if (profesional) {
+                enriched.profesional_nombre = enriched.profesional_nombre || profesional.nombre || 'Profesional';
+                enriched.profesional_avatar = enriched.profesional_avatar || profesional.avatar_url || '';
+            }
+        }
+    } catch (error) {
+        console.error('No se pudo enriquecer profesional del trabajo:', error.message);
+    }
+
+    enriched.cliente_nombre = enriched.cliente_nombre || 'Cliente';
+    enriched.profesional_nombre = enriched.profesional_nombre || 'Profesional';
+    return enriched;
+};
+
+const enrichTrabajosParticipants = async (trabajos) => Promise.all((trabajos || []).map(enrichTrabajoParticipants));
 
 const isClientProfileComplete = (cliente) => {
     if (!cliente) return false;
@@ -134,7 +162,7 @@ app.get('/', (req, res) => {
 // RUTA: CREAR TRABAJO (CONTRATAR)
 // =========================================================================
 app.post('/api/trabajos', async (req, res) => {
-    const { cliente_id, profesional_id, solicitud_id, titulo, descripcion, horario, presupuesto, cliente_nombre, profesional_nombre, categoria } = req.body;
+    const { cliente_id, profesional_id, solicitud_id, titulo, descripcion, horario, presupuesto, cliente_nombre, categoria } = req.body;
 
     if (!cliente_id || !profesional_id) {
         return res.status(400).json({ error: 'Faltan cliente_id o profesional_id' });
@@ -146,10 +174,10 @@ app.post('/api/trabajos', async (req, res) => {
 
         if (solicitud_id) {
             const existingJob = await pool.query(
-                `${trabajoParticipantSelect}
-                 WHERE t.solicitud_id = $1
-                   AND t.estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA')
-                 ORDER BY t.created_at DESC
+                `SELECT * FROM trabajos
+                 WHERE solicitud_id = $1
+                   AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA')
+                 ORDER BY created_at DESC
                  LIMIT 1`,
                 [solicitud_id]
             );
@@ -158,7 +186,7 @@ app.post('/api/trabajos', async (req, res) => {
                 return res.json({
                     success: true,
                     alreadyExists: true,
-                    trabajo: existingJob.rows[0]
+                    trabajo: await enrichTrabajoParticipants(existingJob.rows[0])
                 });
             }
         }
@@ -166,7 +194,6 @@ app.post('/api/trabajos', async (req, res) => {
         let metodoPago = normalizePaymentMethod(req.body.metodo_pago);
         let montoAcordado = parseMoney(req.body.monto_acordado ?? req.body.monto_total ?? presupuesto);
         let clienteNombre = cliente_nombre || null;
-        let profesionalNombre = profesional_nombre || null;
 
         if (solicitud_id) {
             try {
@@ -176,7 +203,6 @@ app.post('/api/trabajos', async (req, res) => {
                     metodoPago = normalizePaymentMethod(req.body.metodo_pago || solicitud.metodo_pago);
                     montoAcordado = montoAcordado ?? parseMoney(solicitud.monto_acordado ?? solicitud.presupuesto_max ?? solicitud.presupuesto_min);
                     clienteNombre = clienteNombre || solicitud.cliente_nombre || null;
-                    profesionalNombre = profesionalNombre || solicitud.profesional_nombre || null;
                 }
             } catch (err) {
                 console.error("No se pudo leer la solicitud para copiar pago/monto:", err.message);
@@ -186,9 +212,9 @@ app.post('/api/trabajos', async (req, res) => {
         const result = await pool.query(
             `INSERT INTO trabajos (
                 cliente_id, profesional_id, solicitud_id, estado, titulo, descripcion, horario,
-                presupuesto, cliente_nombre, profesional_nombre, categoria, monto_acordado, metodo_pago, estado_pago
+                presupuesto, cliente_nombre, categoria, monto_acordado, metodo_pago, estado_pago
              ) 
-             VALUES ($1, $2, $3, 'EN_PROGRESO', $4, $5, $6, $7, $8, $9, $10, $11, $12, 'PENDIENTE') RETURNING *`,
+             VALUES ($1, $2, $3, 'EN_PROGRESO', $4, $5, $6, $7, $8, $9, $10, $11, 'PENDIENTE') RETURNING *`,
             [
                 cliente_id,
                 profesional_id,
@@ -198,7 +224,6 @@ app.post('/api/trabajos', async (req, res) => {
                 horario || null,
                 presupuesto || null,
                 clienteNombre,
-                profesionalNombre,
                 categoria || null,
                 montoAcordado,
                 metodoPago
@@ -249,7 +274,7 @@ app.post('/api/trabajos', async (req, res) => {
             });
         } catch (err) { console.error('Error enviando notificacion', err); }
 
-        res.json({ success: true, trabajo: result.rows[0] });
+        res.json({ success: true, trabajo: await enrichTrabajoParticipants(result.rows[0]) });
     } catch (error) {
         console.error('Error al crear el trabajo:', error.message);
         res.status(500).json({ error: 'Error interno del servidor al crear el trabajo' });
@@ -1138,9 +1163,9 @@ app.post('/api/trabajos/:id/resena', async (req, res) => {
 // =========================================================================
 app.get('/api/trabajos/:id', async (req, res) => {
     try {
-        const result = await pool.query(`${trabajoParticipantSelect} WHERE t.id = $1`, [req.params.id]);
+        const result = await pool.query('SELECT * FROM trabajos WHERE id = $1', [req.params.id]);
         if (result.rows.length === 0) return res.status(404).json({ error: 'Trabajo no encontrado' });
-        res.json(result.rows[0]);
+        res.json(await enrichTrabajoParticipants(result.rows[0]));
     } catch (error) {
         console.error('Error buscando trabajo por ID:', error.message);
         res.status(500).json({ error: 'Error del servidor' });
@@ -1153,13 +1178,10 @@ app.get('/api/trabajos/:id', async (req, res) => {
 app.get('/api/trabajos/cliente/:id', async (req, res) => {
     try {
         const result = await pool.query(
-            `${trabajoParticipantSelect}
-             WHERE t.cliente_id = $1
-               AND t.estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA')
-             ORDER BY t.created_at DESC`,
+            "SELECT * FROM trabajos WHERE cliente_id = $1 AND estado IN ('EN_PROGRESO', 'FINALIZADO_PROFESIONAL', 'ESPERANDO_CONFIRMACION_TRANSFERENCIA') ORDER BY created_at DESC",
             [req.params.id]
         );
-        res.json(result.rows);
+        res.json(await enrichTrabajosParticipants(result.rows));
     } catch (error) {
         console.error('Error buscando trabajos del cliente:', error.message);
         res.status(500).json({ error: 'Error del servidor' });
@@ -1172,14 +1194,14 @@ app.get('/api/trabajos/cliente/:id', async (req, res) => {
 app.get('/api/trabajos/cliente/:id/historial', async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT ${trabajoParticipantFields},
+            `SELECT t.*,
                     (SELECT COUNT(*) FROM resenas r WHERE r.trabajo_id = t.id) > 0 as tiene_resena
-             ${trabajoParticipantJoins}
+             FROM trabajos t
              WHERE t.cliente_id = $1 AND t.estado = 'CONFIRMADO_CLIENTE' 
              ORDER BY t.created_at DESC`,
             [req.params.id]
         );
-        res.json(result.rows);
+        res.json(await enrichTrabajosParticipants(result.rows));
     } catch (error) {
         console.error('Error buscando historial del cliente:', error.message);
         res.status(500).json({ error: 'Error del servidor' });
@@ -1192,12 +1214,10 @@ app.get('/api/trabajos/cliente/:id/historial', async (req, res) => {
 app.get('/api/trabajos/profesional/:id', async (req, res) => {
     try {
         const result = await pool.query(
-            `${trabajoParticipantSelect}
-             WHERE t.profesional_id = $1
-             ORDER BY t.created_at DESC`,
+            'SELECT * FROM trabajos WHERE profesional_id = $1 ORDER BY created_at DESC',
             [req.params.id]
         );
-        res.json(result.rows);
+        res.json(await enrichTrabajosParticipants(result.rows));
     } catch (error) {
         console.error('Error buscando trabajos del profesional:', error.message);
         res.status(500).json({ error: 'Error del servidor' });
