@@ -475,7 +475,10 @@ app.post("/api/register", async (req, res) => {
             `INSERT INTO usuarios (nombre, email, password, rol, activo) VALUES ($1, $2, $3, $4, true) RETURNING id, nombre, email, rol`,
             [nombre, email, hashedPassword, rol]
         );
-        res.status(201).json({ message: "Usuario creado correctamente", user: newUser.rows[0] });
+        const user = newUser.rows[0];
+        const token = generarToken(user);
+        await registrarSesion(req, user.id);
+        res.status(201).json({ message: "Usuario creado correctamente", token, user });
     } catch (error) {
         console.error("Register error:", error);
         res.status(500).json({ message: "Error del servidor" });
