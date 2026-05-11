@@ -23,6 +23,14 @@ const SCHEMAS_TO_DROP = [
   'logs', 'pagos', 'resenas', 'solicitudes', 'trabajo', 'perfiles'
 ];
 
+const safeSqlIdentifier = (identifier) => {
+  const value = String(identifier || "");
+  if (!/^[a-z_][a-z0-9_]*$/i.test(value)) {
+    throw new Error(`Identificador SQL inseguro: ${value}`);
+  }
+  return `"${value}"`;
+};
+
 async function cleanup() {
   try {
     console.log("🧹 Iniciando limpieza nuclear de la base de datos...");
@@ -30,7 +38,7 @@ async function cleanup() {
     // 1. Eliminar esquemas extra
     for (const schema of SCHEMAS_TO_DROP) {
       console.log(`🗑️ Eliminando esquema: ${schema}...`);
-      await pool.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      await pool.query(`DROP SCHEMA IF EXISTS ${safeSqlIdentifier(schema)} CASCADE`);
     }
 
     // 2. Eliminar todas las tablas del esquema public para empezar de cero
@@ -42,7 +50,7 @@ async function cleanup() {
     `);
 
     for (const row of tables.rows) {
-      await pool.query(`DROP TABLE IF EXISTS "${row.table_name}" CASCADE`);
+      await pool.query(`DROP TABLE IF EXISTS ${safeSqlIdentifier(row.table_name)} CASCADE`);
     }
 
     console.log("✨ Base de datos limpia.");

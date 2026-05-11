@@ -20,6 +20,14 @@ const poolConfig = process.env.DATABASE_URL
 
 export const pool = new Pool(poolConfig);
 
+const safeSqlIdentifier = (identifier) => {
+  const value = String(identifier || "");
+  if (!/^[a-z_][a-z0-9_]*$/i.test(value)) {
+    throw new Error(`Identificador SQL inseguro: ${value}`);
+  }
+  return `"${value}"`;
+};
+
 export const initDB = async () => {
   try {
     // 1. Trabajos
@@ -165,7 +173,7 @@ export const initDB = async () => {
 
     for (const [table, columns] of tablesToMigrate) {
       for (const col of columns) {
-        await pool.query(`ALTER TABLE ${table} ALTER COLUMN ${col} TYPE TIMESTAMPTZ`).catch(() => {});
+        await pool.query(`ALTER TABLE ${safeSqlIdentifier(table)} ALTER COLUMN ${safeSqlIdentifier(col)} TYPE TIMESTAMPTZ`).catch(() => {});
       }
     }
 

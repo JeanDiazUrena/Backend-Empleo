@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "dev": "node start-all.js",
-    "start": "concurrently \"cd auth-service && npm start\" \"cd perfile-service && npm start\" \"cd trabajo-service && npm start\" \"cd pago-service && npm start\" \"cd notificacion-service && npm start\" \"cd gateway && npm start\""
+    "start": "concurrently \"cd auth-service && npm start\" \"cd perfile-service && npm start\" \"cd trabajo-service && npm start\" \"cd pago-service && npm start\" \"cd notificacion-service && npm start\" \"cd gateway && npm start\"",
+    "check:sql": "node scripts/check-sql-safety.mjs"
   },
   "keywords": [],
   "author": "",
