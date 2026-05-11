@@ -16,6 +16,7 @@ import {
     validateBankAccount,
     validateCommissionCard
 } from "./financialSecurity.js";
+import { normalizeAndValidatePhone } from "./phoneValidation.js";
 
 dotenv.config();
 
@@ -88,6 +89,8 @@ app.post("/api/perfiles", verificarToken, upload.fields([{ name: 'avatar', maxCo
         // Usar el ID del token por seguridad si no viene en el body
         const usuario_id = req.user.id; 
         const { nombre, profesion, biografia, categoria, anios_experiencia, sitio_web, telefono, email_publico, ciudad, sector, horario, habilidades } = req.body;
+        const phoneCheck = normalizeAndValidatePhone(telefono);
+        if (!phoneCheck.ok) return res.status(400).json({ error: phoneCheck.message, message: phoneCheck.message });
         
         console.log(`[PERFILES] Intentando guardar perfil para usuario: ${usuario_id}`);
         
@@ -99,7 +102,7 @@ app.post("/api/perfiles", verificarToken, upload.fields([{ name: 'avatar', maxCo
         if (checkUser.rows.length > 0) {
             profesionalId = checkUser.rows[0].id;
             let query = `UPDATE profesionales SET nombre=$1, profesion=$2, biografia=$3, anios_experiencia=$4, telefono=$5, email_publico=$6, sitio_web=$7, ciudad=$8, sector=$9, horario_texto=$10`;
-            const values = [nombre, profesion, biografia, anios_experiencia || 0, telefono, email_publico, sitio_web, ciudad, sector, horario];
+            const values = [nombre, profesion, biografia, anios_experiencia || 0, phoneCheck.formatted, email_publico, sitio_web, ciudad, sector, horario];
             let counter = 11;
             if (avatarUrl) { query += `, avatar_url=$${counter}`; values.push(avatarUrl); counter++; }
             if (coverUrl) { query += `, cover_url=$${counter}`; values.push(coverUrl); counter++; }
@@ -109,7 +112,7 @@ app.post("/api/perfiles", verificarToken, upload.fields([{ name: 'avatar', maxCo
         } else {
             const insertResult = await pool.query(
                 `INSERT INTO profesionales (usuario_id, nombre, profesion, biografia, anios_experiencia, telefono, email_publico, sitio_web, ciudad, sector, horario_texto, avatar_url, cover_url) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`,
-                [usuario_id, nombre, profesion, biografia, anios_experiencia || 0, telefono, email_publico, sitio_web, ciudad, sector, horario, avatarUrl, coverUrl]
+                [usuario_id, nombre, profesion, biografia, anios_experiencia || 0, phoneCheck.formatted, email_publico, sitio_web, ciudad, sector, horario, avatarUrl, coverUrl]
             );
             profesionalId = insertResult.rows[0].id;
         }
@@ -552,6 +555,8 @@ app.get("/api/clientes/:usuarioId", async (req, res) => {
 app.post("/api/clientes", verificarToken, upload.fields([{ name: 'avatar', maxCount: 1 }, { name: 'banner', maxCount: 1 }]), async (req, res) => {
     try {
         const { usuario_id, phone, location, nombre, email } = req.body;
+        const phoneCheck = normalizeAndValidatePhone(phone);
+        if (!phoneCheck.ok) return res.status(400).json({ error: phoneCheck.message, message: phoneCheck.message });
 
         let avatarUrl = null;
         let bannerUrl = null;
@@ -568,12 +573,12 @@ app.post("/api/clientes", verificarToken, upload.fields([{ name: 'avatar', maxCo
         if (check.rows.length > 0) {
             await pool.query(
                 `UPDATE clientes SET telefono = $1, direccion = $2, avatar = COALESCE($3, avatar), banner = COALESCE($4, banner), nombre = COALESCE($5, nombre), email = COALESCE($6, email) WHERE usuario_id = $7`,
-                [phone, location, avatarUrl, bannerUrl, nombre, email, usuario_id]
+                [phoneCheck.formatted, location, avatarUrl, bannerUrl, nombre, email, usuario_id]
             );
         } else {
             await pool.query(
                 `INSERT INTO clientes (usuario_id, telefono, direccion, avatar, banner, nombre, email) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-                [usuario_id, phone, location, avatarUrl, bannerUrl, nombre, email]
+                [usuario_id, phoneCheck.formatted, location, avatarUrl, bannerUrl, nombre, email]
             );
         }
 
@@ -631,7 +636,7 @@ const isClientProfileComplete = (cliente) => {
     if (!cliente) return false;
     return Boolean(
         String(cliente.nombre || "").trim() &&
-        String(cliente.telefono || "").trim() &&
+        normalizeAndValidatePhone(cliente.telefono).ok &&
         String(cliente.direccion || "").trim()
     );
 };
