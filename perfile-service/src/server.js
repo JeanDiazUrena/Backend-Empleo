@@ -9,6 +9,13 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
+import {
+    decryptValue,
+    encryptValue,
+    maskBankAccount,
+    validateBankAccount,
+    validateCommissionCard
+} from "./financialSecurity.js";
 
 dotenv.config();
 
@@ -253,9 +260,65 @@ app.get("/api/profesionales/:usuarioId", async (req, res) => {
 app.get("/api/profesionales/:usuarioId/financiero", verificarToken, async (req, res) => {
     try {
         const { usuarioId } = req.params;
-        const result = await pool.query("SELECT nombre, stripe_card_token, cuenta_bancaria, banco, estado_financiero FROM profesionales WHERE usuario_id = $1", [usuarioId]);
+        const result = await pool.query(
+            `SELECT id, nombre, stripe_card_token, cuenta_bancaria, banco, estado_financiero,
+                    commission_card_brand, commission_card_last4, commission_card_exp, commission_card_holder
+             FROM profesionales WHERE usuario_id = $1`,
+            [usuarioId]
+        );
         if (result.rows.length === 0) return res.status(404).json({ error: "No encontrado" });
-        res.json(result.rows[0]);
+        const profesional = result.rows[0];
+        const accountsResult = await pool.query(
+            `SELECT id, titular, banco, tipo_cuenta, numero_cuenta_encrypted, last4, is_default
+             FROM profesional_bank_accounts
+             WHERE profesional_id = $1
+             ORDER BY is_default DESC, created_at ASC`,
+            [profesional.id]
+        ).catch(() => ({ rows: [] }));
+
+        const bankAccounts = accountsResult.rows.map((account) => {
+            const numeroCuenta = decryptValue(account.numero_cuenta_encrypted);
+            return {
+                id: account.id,
+                titular: account.titular,
+                banco: account.banco,
+                tipo_cuenta: account.tipo_cuenta || "Ahorros",
+                numero_cuenta: numeroCuenta,
+                masked_account: maskBankAccount(numeroCuenta),
+                last4: account.last4,
+                is_default: account.is_default
+            };
+        });
+
+        if (bankAccounts.length === 0 && profesional.cuenta_bancaria) {
+            bankAccounts.push({
+                id: "legacy",
+                titular: profesional.nombre || "Profesional",
+                banco: profesional.banco || "",
+                tipo_cuenta: "Ahorros",
+                numero_cuenta: profesional.cuenta_bancaria,
+                masked_account: maskBankAccount(profesional.cuenta_bancaria),
+                last4: String(profesional.cuenta_bancaria).replace(/\D/g, "").slice(-4),
+                is_default: true
+            });
+        }
+
+        const defaultAccount = bankAccounts.find((account) => account.is_default) || bankAccounts[0] || null;
+
+        res.json({
+            nombre: profesional.nombre,
+            stripe_card_token: profesional.stripe_card_token,
+            cuenta_bancaria: defaultAccount?.numero_cuenta || "",
+            banco: defaultAccount?.banco || profesional.banco || "",
+            estado_financiero: profesional.estado_financiero,
+            commission_card: profesional.commission_card_last4 ? {
+                brand: profesional.commission_card_brand,
+                last4: profesional.commission_card_last4,
+                exp: profesional.commission_card_exp,
+                holder_name: profesional.commission_card_holder
+            } : null,
+            bank_accounts: bankAccounts
+        });
     } catch (error) { 
         console.error("Error obteniendo datos financieros:", error);
         res.status(500).json({ error: "Error servidor: " + error.message }); 
@@ -273,7 +336,123 @@ app.put("/api/profesionales/:usuarioId/bloquear", async (req, res) => {
     }
 });
 
-app.put("/api/profesionales/:usuarioId/financiero", verificarToken, async (req, res) => {
+app.put("/api/profesionales/:usuarioId/financiero/v2", verificarToken, async (req, res) => {
+    const { usuarioId } = req.params;
+
+    try {
+        if (req.user.id !== usuarioId && req.user.rol !== "admin") {
+            return res.status(403).json({ error: "No autorizado" });
+        }
+
+        const commissionCard = validateCommissionCard(req.body);
+        if (!commissionCard.valid) {
+            return res.status(400).json({ error: commissionCard.message, message: commissionCard.message });
+        }
+
+        const incomingAccounts = Array.isArray(req.body.bank_accounts)
+            ? req.body.bank_accounts
+            : (req.body.cuenta_bancaria || req.body.banco)
+                ? [{ titular: req.body.titular || req.body.nombre || "Profesional ServiHub", banco: req.body.banco, numero_cuenta: req.body.cuenta_bancaria, is_default: true }]
+                : [];
+
+        const validatedAccounts = [];
+        for (const account of incomingAccounts) {
+            const validation = validateBankAccount(account);
+            if (!validation.valid) {
+                return res.status(400).json({ error: validation.message, message: validation.message });
+            }
+            validatedAccounts.push({ ...validation.data, is_default: Boolean(account.is_default) });
+        }
+
+        if (validatedAccounts.length === 0) {
+            return res.status(400).json({ error: "Agrega al menos una cuenta bancaria válida.", message: "Agrega al menos una cuenta bancaria válida." });
+        }
+
+        if (!validatedAccounts.some((account) => account.is_default)) validatedAccounts[0].is_default = true;
+        const defaultAccount = validatedAccounts.find((account) => account.is_default) || validatedAccounts[0];
+        const savedCard = commissionCard.data;
+        const check = await pool.query("SELECT id FROM profesionales WHERE usuario_id = $1", [usuarioId]);
+        let profesionalId;
+
+        if (check.rows.length > 0) {
+            profesionalId = check.rows[0].id;
+            await pool.query(
+                `UPDATE profesionales
+                 SET stripe_card_token = COALESCE($1, stripe_card_token),
+                     cuenta_bancaria = $2,
+                     banco = $3,
+                     commission_card_brand = COALESCE($4, commission_card_brand),
+                     commission_card_last4 = COALESCE($5, commission_card_last4),
+                     commission_card_exp = COALESCE($6, commission_card_exp),
+                     commission_card_holder = COALESCE($7, commission_card_holder)
+                 WHERE usuario_id = $8`,
+                [
+                    savedCard?.token || null,
+                    maskBankAccount(defaultAccount.numero_cuenta),
+                    defaultAccount.banco,
+                    savedCard?.brand || null,
+                    savedCard?.last4 || null,
+                    savedCard?.exp || null,
+                    savedCard?.holder || null,
+                    usuarioId
+                ]
+            );
+        } else {
+            const insertResult = await pool.query(
+                `INSERT INTO profesionales (
+                    usuario_id, stripe_card_token, cuenta_bancaria, banco,
+                    commission_card_brand, commission_card_last4, commission_card_exp, commission_card_holder,
+                    nombre, profesion, biografia, ciudad, sector, telefono, anios_experiencia, activo
+                 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                 RETURNING id`,
+                [
+                    usuarioId,
+                    savedCard?.token || null,
+                    maskBankAccount(defaultAccount.numero_cuenta),
+                    defaultAccount.banco,
+                    savedCard?.brand || null,
+                    savedCard?.last4 || null,
+                    savedCard?.exp || null,
+                    savedCard?.holder || null,
+                    "Profesional",
+                    "Sin especificar",
+                    "",
+                    "Sin especificar",
+                    "Sin especificar",
+                    "000-000-0000",
+                    0,
+                    true
+                ]
+            );
+            profesionalId = insertResult.rows[0].id;
+        }
+
+        await pool.query("DELETE FROM profesional_bank_accounts WHERE profesional_id = $1", [profesionalId]).catch(() => {});
+        for (const account of validatedAccounts) {
+            await pool.query(
+                `INSERT INTO profesional_bank_accounts
+                 (profesional_id, titular, banco, tipo_cuenta, numero_cuenta_encrypted, last4, is_default)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [
+                    profesionalId,
+                    account.titular,
+                    account.banco,
+                    account.tipo_cuenta,
+                    encryptValue(account.numero_cuenta),
+                    account.last4,
+                    account.is_default
+                ]
+            );
+        }
+
+        res.json({ message: "Datos financieros actualizados exitosamente" });
+    } catch (error) {
+        console.error("ERROR CRITICO EN GUARDADO FINANCIERO:", error);
+        res.status(500).json({ error: "Error en el servidor: " + error.message });
+    }
+});
+
+app.put("/api/profesionales/:usuarioId/financiero-legacy-disabled", verificarToken, async (req, res) => {
     const { usuarioId } = req.params;
     const { stripe_card_token, cuenta_bancaria, banco } = req.body;
 

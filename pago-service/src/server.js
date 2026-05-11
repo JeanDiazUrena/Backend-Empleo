@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import jwt from "jsonwebtoken";
 import { pool, testDB } from "./db.js";
+import { validatePaymentCard } from "./paymentValidation.js";
 
 dotenv.config();
 
@@ -178,15 +179,12 @@ app.get("/api/settings/payments/:usuarioId", verificarToken, async (req, res) =>
 app.post("/api/settings/payments", verificarToken, async (req, res) => {
     try {
         console.log("📥 Recibiendo solicitud de pago segura");
-        const { usuario_id, token, brand, last4, exp, holder_name, proveedor, card_number } = req.body;
-        const normalizedCardNumber = String(card_number || "").replace(/\D/g, "");
-        const resolvedLast4 = last4 || (normalizedCardNumber.length >= 4 ? normalizedCardNumber.slice(-4) : "");
-        const resolvedToken = token || (normalizedCardNumber ? `local-card-${resolvedLast4}-${Date.now()}` : "");
+        const { usuario_id, proveedor } = req.body;
 
-        if (!usuario_id || !resolvedToken || !resolvedLast4 || !exp) {
+        if (!usuario_id) {
             return res.status(400).json({
                 success: false,
-                message: "Datos incompletos (tarjeta, exp y usuario son requeridos)",
+                message: "El usuario es requerido",
             });
         }
 
@@ -194,9 +192,21 @@ app.post("/api/settings/payments", verificarToken, async (req, res) => {
             return res.status(403).json({ success: false, message: "No autorizado" });
         }
 
+        const cardValidation = validatePaymentCard(req.body);
+        if (!cardValidation.valid) {
+            return res.status(400).json({
+                success: false,
+                message: cardValidation.message,
+                error: cardValidation.message
+            });
+        }
+
+        const safeCard = cardValidation.data;
+        const resolvedToken = `card_${safeCard.brand.toLowerCase().replace(/\W/g, "")}_${safeCard.last4}_${safeCard.fingerprint.slice(0, 18)}`;
+
         const result = await pool.query(
-            "INSERT INTO metodos_pago (usuario_id, brand, holder_name, last4, exp, token, proveedor) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, brand, last4, exp, proveedor",
-            [usuario_id, brand, holder_name, resolvedLast4, exp, resolvedToken, proveedor || 'local']
+            "INSERT INTO metodos_pago (usuario_id, brand, holder_name, last4, exp, token, proveedor) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, brand, holder_name, last4, exp, proveedor",
+            [usuario_id, safeCard.brand, safeCard.holder_name, safeCard.last4, safeCard.exp, resolvedToken, proveedor || 'tokenizado']
         );
 
         res.json({

@@ -47,11 +47,34 @@ const initDB = async () => {
         stripe_card_token TEXT,
         cuenta_bancaria VARCHAR(255),
         banco VARCHAR(255),
+        commission_card_brand VARCHAR(50),
+        commission_card_last4 VARCHAR(4),
+        commission_card_exp VARCHAR(10),
+        commission_card_holder VARCHAR(255),
         estado_financiero VARCHAR(50) DEFAULT 'activo',
         created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
       )
     `);
+
+    await pool.query(`ALTER TABLE profesionales ADD COLUMN IF NOT EXISTS commission_card_brand VARCHAR(50)`).catch(() => {});
+    await pool.query(`ALTER TABLE profesionales ADD COLUMN IF NOT EXISTS commission_card_last4 VARCHAR(4)`).catch(() => {});
+    await pool.query(`ALTER TABLE profesionales ADD COLUMN IF NOT EXISTS commission_card_exp VARCHAR(10)`).catch(() => {});
+    await pool.query(`ALTER TABLE profesionales ADD COLUMN IF NOT EXISTS commission_card_holder VARCHAR(255)`).catch(() => {});
+
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS profesional_bank_accounts (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        profesional_id UUID REFERENCES profesionales(id) ON DELETE CASCADE,
+        titular VARCHAR(255) NOT NULL,
+        banco VARCHAR(255) NOT NULL,
+        tipo_cuenta VARCHAR(50) DEFAULT 'Ahorros',
+        numero_cuenta_encrypted TEXT NOT NULL,
+        last4 VARCHAR(4),
+        is_default BOOLEAN DEFAULT false,
+        created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+      )
+    `).catch(() => {});
 
     // Clientes
     await pool.query(`
